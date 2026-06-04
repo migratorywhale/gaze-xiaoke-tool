@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -82,6 +83,7 @@ class CaptureTarget:
     bbox: tuple[int, int, int, int] | None
     label: str
     app_name: str | None = None
+    window_id: int | None = None
 
 
 class GLMCaptioner:
@@ -203,7 +205,7 @@ def parse_region(value: str | None) -> tuple[int, int, int, int] | None:
     return x, y, x + width, y + height
 
 
-def capture_target(window: str | None, region: str | None) -> CaptureTarget:
+def capture_target(window: str | None, region: str | None, *, strict_window: bool = False) -> CaptureTarget:
     bbox = parse_region(region)
     if bbox:
         return CaptureTarget(bbox=bbox, label=f"region:{region}")
@@ -212,6 +214,8 @@ def capture_target(window: str | None, region: str | None) -> CaptureTarget:
         found = find_macos_window(window)
         if found:
             return found
+        if strict_window:
+            raise RuntimeError(f"window not found: {window!r}")
         print(f"[warn] window not found: {window!r}; falling back to fullscreen", file=sys.stderr)
 
     return CaptureTarget(bbox=None, label=window or "fullscreen")
@@ -250,13 +254,14 @@ def find_macos_window(needle: str) -> CaptureTarget | None:
             continue
         area = int(bounds.get("Width", 0)) * int(bounds.get("Height", 0))
         if area > 0:
-            matches.append((area, owner, title, bounds))
+            window_id = int(win.get("kCGWindowNumber", 0) or 0) or None
+            matches.append((area, owner, title, bounds, window_id))
 
     if not matches:
         return None
 
-    _, owner, title, bounds = max(matches, key=lambda item: item[0])
-    return target_from_window_bounds(bounds, title or owner or needle, app_name=owner or None)
+    _, owner, title, bounds, window_id = max(matches, key=lambda item: item[0])
+    return target_from_window_bounds(bounds, title or owner or needle, app_name=owner or None, window_id=window_id)
 
 
 def find_active_macos_window() -> CaptureTarget | None:
@@ -288,13 +293,14 @@ def find_active_macos_window() -> CaptureTarget | None:
         area = width * height
         if width < 80 or height < 80 or area < 20_000:
             continue
-        candidates.append((area, owner, title, bounds))
+        window_id = int(win.get("kCGWindowNumber", 0) or 0) or None
+        candidates.append((area, owner, title, bounds, window_id))
 
     if not candidates:
         return None
 
-    _, owner, title, bounds = max(candidates, key=lambda item: item[0])
-    return target_from_window_bounds(bounds, title or owner, app_name=owner or None)
+    _, owner, title, bounds, window_id = max(candidates, key=lambda item: item[0])
+    return target_from_window_bounds(bounds, title or owner, app_name=owner or None, window_id=window_id)
 
 
 def frontmost_app_name() -> str | None:
@@ -310,13 +316,18 @@ def frontmost_app_name() -> str | None:
     return str(name) if name else None
 
 
-def target_from_window_bounds(bounds: Any, label: str, app_name: str | None = None) -> CaptureTarget:
+def target_from_window_bounds(
+    bounds: Any,
+    label: str,
+    app_name: str | None = None,
+    window_id: int | None = None,
+) -> CaptureTarget:
     scale = mac_screen_scale()
     x = int(float(bounds["X"]) * scale)
     y = int(float(bounds["Y"]) * scale)
     width = int(float(bounds["Width"]) * scale)
     height = int(float(bounds["Height"]) * scale)
-    return CaptureTarget(bbox=(x, y, x + width, y + height), label=label, app_name=app_name)
+    return CaptureTarget(bbox=(x, y, x + width, y + height), label=label, app_name=app_name, window_id=window_id)
 
 
 def mac_screen_scale() -> float:
@@ -332,7 +343,32 @@ def mac_screen_scale() -> float:
 
 
 def screenshot(target: CaptureTarget) -> Image.Image:
+    if target.window_id:
+        return screenshot_window(target.window_id)
     return ImageGrab.grab(bbox=target.bbox, all_screens=False)
+
+
+def screenshot_window(window_id: int) -> Image.Image:
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        path = tmp.name
+    try:
+        result = subprocess.run(
+            ["screencapture", "-x", "-l", str(window_id), path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", "replace").strip()
+            raise RuntimeError(stderr or f"screencapture exited {result.returncode}")
+        with Image.open(path) as image:
+            return image.copy()
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def apply_masks(image: Image.Image, presets: list[str], rect_values: list[str]) -> Image.Image:
@@ -601,7 +637,11 @@ def env_bookmark_keywords() -> list[str]:
 
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
-    fallback_target = capture_target(args.window, args.region)
+    try:
+        fallback_target = capture_target(args.window, args.region, strict_window=args.strict_window)
+    except RuntimeError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return 2
     bookmark_keywords = env_bookmark_keywords()
     pusher = EntryPusher(
         ssh_host=args.ssh_host or os.getenv("GAZE_SSH_HOST"),
@@ -710,6 +750,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Mac gaze client for realtime screen captions.")
     parser.add_argument("--window", "-w", help="Fuzzy match a macOS window/app name.")
     parser.add_argument("--region", help="Capture x,y,width,height instead of full screen.")
+    parser.add_argument(
+        "--strict-window",
+        action="store_true",
+        help="Fail instead of falling back to fullscreen when --window is not found.",
+    )
     parser.add_argument(
         "--follow-active-window",
         action="store_true",

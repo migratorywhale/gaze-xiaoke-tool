@@ -88,6 +88,12 @@ python gaze_local.py --caption-provider glm
 python gaze_local.py -w "Claude" --dry-run
 ```
 
+如果窗口必须存在，避免退回全屏：
+
+```bash
+python gaze_local.py -w "Disco Elysium" --strict-window --dry-run
+```
+
 自动跟随当前前台窗口：
 
 ```bash
