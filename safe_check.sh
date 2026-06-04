@@ -14,7 +14,7 @@ TTL_STORE="${TMPDIR:-/tmp}/gaze-safe-check-ttl-$$.json"
 trap 'rm -f "$TMP_STORE" "$TTL_STORE"' EXIT
 
 echo "== syntax =="
-"$PY" -m py_compile gaze_local.py push_caption.py cognition_gaze_patch.py
+"$PY" -m py_compile gaze_local.py gaze_launcher.py push_caption.py cognition_gaze_patch.py
 
 echo "== local helpers =="
 "$PY" - <<'PY'
@@ -82,6 +82,38 @@ frontmost = frontmost_app_name()
 active = find_active_macos_window()
 assert frontmost is None or isinstance(frontmost, str)
 assert active is None or active.label
+PY
+
+echo "== launcher command builder =="
+"$PY" - <<'PY'
+from gaze_launcher import LauncherConfig, build_command, command_string
+
+cmd = build_command(LauncherConfig())
+text = command_string(cmd)
+assert "gaze_local.py" in text
+assert "--follow-active-window" in cmd
+assert "--dry-run" in cmd
+assert "--auto-mask" in cmd
+assert "--caption-provider" in cmd and "none" in cmd
+
+cmd = build_command(
+    LauncherConfig(
+        target_mode="window",
+        window="Claude",
+        dry_run=False,
+        auto_mask=False,
+        mask_presets=["browser-top"],
+        caption_provider="glm",
+        extra_args="--verbose",
+    ),
+    once=True,
+)
+assert "--window" in cmd and "Claude" in cmd
+assert "--dry-run" not in cmd
+assert "--auto-mask" not in cmd
+assert "--mask-preset" in cmd and "browser-top" in cmd
+assert "--caption-provider" in cmd and "glm" in cmd
+assert "--once" in cmd and "--verbose" in cmd
 PY
 
 echo "== cognition helper =="

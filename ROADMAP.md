@@ -11,6 +11,7 @@
 - App-aware auto masking for common browser windows.
 - Vision image-diff throttling for unchanged frames.
 - Foreground macOS window tracking with `--follow-active-window`.
+- Tkinter launcher for composing and running local gaze commands.
 - VPS-side `push_caption.py` with file locking, sanitized window names, bounded timeline size, and fixed JSON read/write handling.
 - TTL cleanup for stale `_realtime:*` entries.
 - cognition helper for `realtime_surface()` and `mark_realtime_read_impl()`.
@@ -22,7 +23,7 @@
 ## Next
 
 1. Add more precise mask presets for menu bars, notifications, and per-browser toolbar heights.
-2. Add a tiny launcher UI for selecting window/region and toggling dry-run/upload.
+2. Add launcher niceties: window list, saved profiles, and clearer upload warnings.
 
 ## Later
 

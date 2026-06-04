@@ -12,6 +12,7 @@
 
 - `AGENTS.md`：给未来 Codex 的施工说明。
 - `gaze_local.py`：Mac 本地端，支持全屏、窗口模糊匹配、区域截屏、OCR、GLM vision caption、自动遮罩、SSH push。
+- `gaze_launcher.py`：本地 Tkinter 小启动器，用按钮组合常用参数。
 - `push_caption.py`：VPS 端 stdin 接收器，修复原分享版 JSON 读取 bug，并加了锁、长度限制、窗口名清洗。
 - `cognition_gaze_patch.py`：给 cognition 类 MCP 服务导入用的 helper：`realtime_surface()`、`read_realtime_impl()` 和 `mark_realtime_read_impl()`。
 - `requirements-macos.txt`：Mac 端依赖。
@@ -42,6 +43,13 @@ GAZE_TTL_SECONDS=21600
 
 ```bash
 ./safe_check.sh
+```
+
+打开小启动器：
+
+```bash
+. .venv/bin/activate
+python gaze_launcher.py
 ```
 
 只测截屏和 OCR，不发到 VPS：
@@ -159,4 +167,4 @@ def mark_realtime_read(up_to_id=None, window_name=None):
 ## 我建议继续优化的地方
 
 1. 更细的隐私遮罩预设：菜单栏、通知区域、不同浏览器顶部高度。
-2. 小启动器：用简单 UI 选窗口、区域、dry-run/upload。
+2. 给启动器加窗口列表和配置保存。
