@@ -22,9 +22,11 @@ STORE = Path(os.getenv("GAZE_STORE_PATH", "/root/.mcp-memory/memories.json"))
 TIMELINE_KEY = "_realtime:screen_caption"
 WINDOW_PREFIX = "_realtime:window:"
 CURRENT_KEY = "_realtime:current_window"
+WINDOW_CURSOR_PREFIX = "_realtime:window_cursor:"
 MAX_TIMELINE = int(os.getenv("GAZE_MAX_TIMELINE", "50"))
 MAX_PER_WINDOW = int(os.getenv("GAZE_MAX_PER_WINDOW", "50"))
 MAX_CAPTION_CHARS = int(os.getenv("GAZE_MAX_CAPTION_CHARS", "500"))
+TTL_SECONDS = int(os.getenv("GAZE_TTL_SECONDS", str(6 * 60 * 60)))
 
 
 def main() -> int:
@@ -71,10 +73,10 @@ def main() -> int:
                 timeline.append(entry)
                 win_list.append(entry)
                 written_ids.append(entry["id"])
-                data[window_key] = json.dumps(win_list[-MAX_PER_WINDOW:], ensure_ascii=False)
+                data[window_key] = encode_entries(win_list, max_items=MAX_PER_WINDOW)
 
-            data[TIMELINE_KEY] = json.dumps(timeline[-MAX_TIMELINE:], ensure_ascii=False)
-            data[CURRENT_KEY] = current_window
+            timeline = cleanup_realtime_data(data, timeline)
+            data[CURRENT_KEY] = timeline[-1].get("window", current_window) if timeline else ""
 
             fh.seek(0)
             fh.write(json.dumps(data, ensure_ascii=False, indent=2))
@@ -107,6 +109,68 @@ def normalize_payload(payload: Any) -> list[dict[str, Any]]:
         entry.setdefault("ts", iso_now())
         entries.append(entry)
     return entries
+
+
+def cleanup_realtime_data(data: dict[str, Any], timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    timeline = prune_entries(timeline)
+    data[TIMELINE_KEY] = encode_entries(timeline, max_items=MAX_TIMELINE)
+
+    live_windows = {
+        str(entry.get("window", "")).strip()
+        for entry in timeline
+        if str(entry.get("window", "")).strip()
+    }
+
+    for key in list(data):
+        if not key.startswith(WINDOW_PREFIX):
+            continue
+        window = key[len(WINDOW_PREFIX):]
+        entries = prune_entries(get_list(data, key))
+        if entries:
+            data[key] = encode_entries(entries, max_items=MAX_PER_WINDOW)
+            live_windows.add(window)
+        else:
+            data.pop(key, None)
+
+    for key in list(data):
+        if not key.startswith(WINDOW_CURSOR_PREFIX):
+            continue
+        window = key[len(WINDOW_CURSOR_PREFIX):]
+        if window not in live_windows:
+            data.pop(key, None)
+
+    return timeline
+
+
+def prune_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if TTL_SECONDS <= 0:
+        return entries
+
+    cutoff = time.time() - TTL_SECONDS
+    kept = []
+    for entry in entries:
+        ts = parse_epoch(entry.get("ts"))
+        if ts is None or ts >= cutoff:
+            kept.append(entry)
+    return kept
+
+
+def parse_epoch(value: Any) -> float | None:
+    if not value:
+        return None
+    from datetime import datetime
+
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.timestamp()
+    return parsed.timestamp()
+
+
+def encode_entries(entries: list[dict[str, Any]], *, max_items: int) -> str:
+    return json.dumps(entries[-max_items:], ensure_ascii=False)
 
 
 def iso_now() -> str:

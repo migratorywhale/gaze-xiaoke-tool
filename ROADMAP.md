@@ -11,15 +11,16 @@
 - Vision image-diff throttling for unchanged frames.
 - Foreground macOS window tracking with `--follow-active-window`.
 - VPS-side `push_caption.py` with file locking, sanitized window names, bounded timeline size, and fixed JSON read/write handling.
+- TTL cleanup for stale `_realtime:*` entries.
 - cognition helper for `realtime_surface()` and `mark_realtime_read_impl()`.
+- Per-window cursors via `_realtime:window_cursor:<window>`.
 - One-command `safe_check.sh`.
 - Private GitHub repo with `.env` and `.venv` ignored.
 
 ## Next
 
-1. Add per-window cursors instead of one global `_realtime:screen_cursor`.
-2. Add TTL cleanup for stale `_realtime:*` entries.
-3. Add an MCP read tool so wakeup can surface "unread count" first and pull full screen context only when needed.
+1. Add an MCP read tool so wakeup can surface "unread count" first and pull full screen context only when needed.
+2. Add app-aware mask presets for browser chrome, menu bars, and notification-heavy apps.
 
 ## Later
 

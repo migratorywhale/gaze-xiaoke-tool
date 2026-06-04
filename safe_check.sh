@@ -10,7 +10,8 @@ fi
 
 PY=.venv/bin/python
 TMP_STORE="${TMPDIR:-/tmp}/gaze-safe-check-$$.json"
-trap 'rm -f "$TMP_STORE"' EXIT
+TTL_STORE="${TMPDIR:-/tmp}/gaze-safe-check-ttl-$$.json"
+trap 'rm -f "$TMP_STORE" "$TTL_STORE"' EXIT
 
 echo "== syntax =="
 "$PY" -m py_compile gaze_local.py push_caption.py cognition_gaze_patch.py
@@ -75,6 +76,51 @@ assert frontmost is None or isinstance(frontmost, str)
 assert active is None or active.label
 PY
 
+echo "== cognition helper =="
+"$PY" - <<'PY'
+import json
+
+from cognition_gaze_patch import mark_realtime_read_impl, realtime_surface
+
+data = {
+    "_realtime:screen_caption": json.dumps([
+        {"id": 1, "caption": "a1", "window": "A", "ts": "2026-01-01T00:00:00+00:00"},
+        {"id": 2, "caption": "a2", "window": "A", "ts": "2026-01-01T00:00:01+00:00"},
+        {"id": 3, "caption": "b1", "window": "B", "ts": "2026-01-01T00:00:02+00:00"},
+    ]),
+    "_realtime:window:A": json.dumps([
+        {"id": 1, "caption": "a1", "window": "A", "ts": "2026-01-01T00:00:00+00:00"},
+        {"id": 2, "caption": "a2", "window": "A", "ts": "2026-01-01T00:00:01+00:00"},
+    ]),
+    "_realtime:window:B": json.dumps([
+        {"id": 3, "caption": "b1", "window": "B", "ts": "2026-01-01T00:00:02+00:00"},
+    ]),
+    "_realtime:current_window": "B",
+}
+
+surface = realtime_surface(data, max_age_sec=999999999)
+assert surface["realtime_screen_unread_count"] == 3
+assert surface["realtime_window_unread_counts"] == {"A": 2, "B": 1}
+assert surface["realtime_current_window_unread_count"] == 1
+
+def load_all():
+    return data
+
+def save_all(next_data):
+    data.clear()
+    data.update(next_data)
+
+result = mark_realtime_read_impl(load_all, save_all, window_name="A")
+assert result == {"updated": True, "window": "A", "new_cursor": 2}
+surface = realtime_surface(data, max_age_sec=999999999)
+assert surface["realtime_window_unread_counts"] == {"A": 0, "B": 1}
+
+result = mark_realtime_read_impl(load_all, save_all)
+assert result == {"updated": True, "new_cursor": 3}
+surface = realtime_surface(data, max_age_sec=999999999)
+assert surface["realtime_screen_unread_count"] == 0
+PY
+
 echo "== OCR generated image =="
 "$PY" - <<'PY'
 from PIL import Image, ImageDraw
@@ -105,6 +151,38 @@ assert data["_realtime:current_window"] == "B_test"
 assert "_realtime:window:A_test" in data
 assert "_realtime:window:B_test" in data
 print("timeline", len(timeline), "current", data["_realtime:current_window"])
+PY
+
+echo "== push_caption TTL cleanup =="
+"$PY" - "$TTL_STORE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+old = {"id": 1, "caption": "old", "window": "old_window", "source": "manual", "ts": "2000-01-01T00:00:00+00:00"}
+data = {
+    "_realtime:screen_caption": json.dumps([old]),
+    "_realtime:window:old_window": json.dumps([old]),
+    "_realtime:window_cursor:old_window": "1",
+    "_realtime:current_window": "old_window",
+}
+Path(sys.argv[1]).write_text(json.dumps(data), encoding="utf-8")
+PY
+printf '%s' '{"caption":"fresh","window":"fresh_window","source":"manual"}' \
+  | GAZE_STORE_PATH="$TTL_STORE" GAZE_TTL_SECONDS=60 "$PY" push_caption.py
+"$PY" - "$TTL_STORE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+timeline = json.loads(data["_realtime:screen_caption"])
+assert len(timeline) == 1
+assert timeline[0]["caption"] == "fresh"
+assert data["_realtime:current_window"] == "fresh_window"
+assert "_realtime:window:old_window" not in data
+assert "_realtime:window_cursor:old_window" not in data
+print("ttl current", data["_realtime:current_window"])
 PY
 
 if [ "${GAZE_SKIP_SCREEN_CHECK:-0}" = "1" ]; then

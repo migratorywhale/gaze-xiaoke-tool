@@ -27,6 +27,7 @@ This tool can observe screen contents. Treat every OCR line and vision caption a
 - Use `--follow-active-window` only after confirming the current foreground app is safe to observe.
 - Prefer full-screen target apps when using OCR/caption, so browser chrome and desktop notifications are hidden.
 - Use `GAZE_BOOKMARK_KEYWORDS` for local words that should be stripped before upload.
+- Keep `GAZE_TTL_SECONDS` short enough that `_realtime:*` remains temporary perception, not long-term memory.
 
 ## Production Changes
 

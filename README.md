@@ -33,6 +33,7 @@ GLM_API_KEY=你的智谱key
 GAZE_SSH_HOST=migratorybird
 GAZE_REMOTE_COMMAND=python3 /root/mcp-memory-server/push_caption.py
 GAZE_BOOKMARK_KEYWORDS=你书签栏里不想被OCR推送的词
+GAZE_TTL_SECONDS=21600
 ```
 
 ## 本地安全测试
@@ -132,14 +133,17 @@ from cognition_gaze_patch import realtime_surface, mark_realtime_read_impl
 surface.update(realtime_surface(all_data))
 
 @mcp.tool()
-def mark_realtime_read(up_to_id=None):
-    return mark_realtime_read_impl(_load_all, _save_all, up_to_id)
+def mark_realtime_read(up_to_id=None, window_name=None):
+    return mark_realtime_read_impl(_load_all, _save_all, up_to_id, window_name)
 ```
 
 修改服务端后重启对应进程，例如 `pm2 restart cognition`。
 
+`window_name` 不传时，保持旧行为：推进全局 `_realtime:screen_cursor`。传窗口名时，只推进 `_realtime:window_cursor:<window>`，适合小克只看完当前窗口、不想把其他窗口标成已读。
+
+`push_caption.py` 默认清理 6 小时以前的 `_realtime:*` 条目；可以在 VPS 环境里设 `GAZE_TTL_SECONDS=0` 关闭。也可以把远端命令写成 `GAZE_REMOTE_COMMAND=GAZE_TTL_SECONDS=21600 python3 /root/mcp-memory-server/push_caption.py`。
+
 ## 我建议继续优化的地方
 
 1. MCP 读工具而非 wakeup 灌入：wakeup 只给“有未读 N 条”，小克想看时再拉取，避免每次上下文被屏幕流污染。
-2. per-window cursor：现在只有全局 `_realtime:screen_cursor`，切窗口后可能互相压掉已读状态。
-3. TTL 清理：`_realtime:*` 是瞬时感知，不应该长期进记忆库；服务端可以定期丢弃超过几小时的 entries。
+2. 更细的隐私遮罩预设：浏览器地址栏/书签栏按应用类型自动遮。
