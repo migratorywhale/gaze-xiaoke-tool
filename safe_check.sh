@@ -24,6 +24,8 @@ from gaze_local import (
     EntryPusher,
     apply_masks,
     clean_caption,
+    find_active_macos_window,
+    frontmost_app_name,
     image_diff_score,
     image_signature,
 )
@@ -66,6 +68,11 @@ entry = {
     "window": CaptureTarget(None, "unit").label,
 }
 assert entry["window"] == "unit"
+
+frontmost = frontmost_app_name()
+active = find_active_macos_window()
+assert frontmost is None or isinstance(frontmost, str)
+assert active is None or active.label
 PY
 
 echo "== OCR generated image =="
@@ -105,6 +112,7 @@ if [ "${GAZE_SKIP_SCREEN_CHECK:-0}" = "1" ]; then
 else
   echo "== screen permission dry-run =="
   "$PY" gaze_local.py --once --dry-run --no-ocr --caption-provider none --mask-preset mac-safe
+  "$PY" gaze_local.py --once --dry-run --no-ocr --caption-provider none --follow-active-window --mask-preset mac-safe
 fi
 
 echo "safe_check OK"

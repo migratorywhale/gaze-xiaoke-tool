@@ -33,6 +33,13 @@ DEFAULT_PROMPT = """看截图，像跟朋友吐槽一样发一条弹幕。
 DEFAULT_REMOTE_COMMAND = "python3 /root/mcp-memory-server/push_caption.py"
 PUSH_IDLE = {"empty", "waiting"}
 MASK_PRESETS = ("menu-bar", "browser-top", "dock-bottom", "mac-safe")
+SYSTEM_WINDOW_OWNERS = {
+    "Control Center",
+    "Dock",
+    "Notification Center",
+    "SystemUIServer",
+    "Window Server",
+}
 
 NOISE_REGEXES = [
     re.compile(r"https?://\S+", re.I),
@@ -197,6 +204,18 @@ def capture_target(window: str | None, region: str | None) -> CaptureTarget:
     return CaptureTarget(bbox=None, label=window or "fullscreen")
 
 
+def current_capture_target(args: argparse.Namespace, fallback: CaptureTarget) -> CaptureTarget:
+    if args.region:
+        return fallback
+    if args.follow_active_window:
+        found = find_active_macos_window()
+        if found:
+            return found
+        if args.verbose:
+            print("[warn] active window not found; using fallback target", file=sys.stderr)
+    return fallback
+
+
 def find_macos_window(needle: str) -> CaptureTarget | None:
     try:
         import Quartz
@@ -224,12 +243,66 @@ def find_macos_window(needle: str) -> CaptureTarget | None:
         return None
 
     _, owner, title, bounds = max(matches, key=lambda item: item[0])
+    return target_from_window_bounds(bounds, title or owner or needle)
+
+
+def find_active_macos_window() -> CaptureTarget | None:
+    try:
+        import Quartz
+    except Exception:
+        return None
+
+    frontmost = frontmost_app_name()
+    if not frontmost:
+        return None
+
+    options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+    windows = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID)
+    candidates = []
+
+    for win in windows:
+        owner = str(win.get("kCGWindowOwnerName", "") or "")
+        title = str(win.get("kCGWindowName", "") or "")
+        layer = int(win.get("kCGWindowLayer", 0) or 0)
+        alpha = float(win.get("kCGWindowAlpha", 1.0) or 0.0)
+        bounds = win.get("kCGWindowBounds")
+        if owner != frontmost or owner in SYSTEM_WINDOW_OWNERS:
+            continue
+        if layer != 0 or alpha <= 0 or not bounds:
+            continue
+        width = int(bounds.get("Width", 0) or 0)
+        height = int(bounds.get("Height", 0) or 0)
+        area = width * height
+        if width < 80 or height < 80 or area < 20_000:
+            continue
+        candidates.append((area, owner, title, bounds))
+
+    if not candidates:
+        return None
+
+    _, owner, title, bounds = max(candidates, key=lambda item: item[0])
+    return target_from_window_bounds(bounds, title or owner)
+
+
+def frontmost_app_name() -> str | None:
+    try:
+        from AppKit import NSWorkspace
+    except Exception:
+        return None
+
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if not app:
+        return None
+    name = app.localizedName()
+    return str(name) if name else None
+
+
+def target_from_window_bounds(bounds: Any, label: str) -> CaptureTarget:
     scale = mac_screen_scale()
     x = int(float(bounds["X"]) * scale)
     y = int(float(bounds["Y"]) * scale)
     width = int(float(bounds["Width"]) * scale)
     height = int(float(bounds["Height"]) * scale)
-    label = title or owner or needle
     return CaptureTarget(bbox=(x, y, x + width, y + height), label=label)
 
 
@@ -488,7 +561,7 @@ def env_bookmark_keywords() -> list[str]:
 
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
-    target = capture_target(args.window, args.region)
+    fallback_target = capture_target(args.window, args.region)
     bookmark_keywords = env_bookmark_keywords()
     pusher = EntryPusher(
         ssh_host=args.ssh_host or os.getenv("GAZE_SSH_HOST"),
@@ -522,9 +595,18 @@ def run(args: argparse.Namespace) -> int:
     prev_texts: list[str] = []
     prev_caption_signature: bytes | None = None
     next_caption_time = 0.0
+    last_target_key: tuple[str, tuple[int, int, int, int] | None] | None = None
 
     while True:
         started = time.time()
+        target = current_capture_target(args, fallback_target)
+        target_key = (target.label, target.bbox)
+        if target_key != last_target_key:
+            prev_texts = []
+            prev_caption_signature = None
+            last_target_key = target_key
+            if args.verbose:
+                print(f"[target] {target.label}")
         image = apply_masks(screenshot(target), args.mask_preset, args.mask_rect)
 
         if ocr:
@@ -580,6 +662,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Mac gaze client for realtime screen captions.")
     parser.add_argument("--window", "-w", help="Fuzzy match a macOS window/app name.")
     parser.add_argument("--region", help="Capture x,y,width,height instead of full screen.")
+    parser.add_argument(
+        "--follow-active-window",
+        action="store_true",
+        help="Capture the current foreground macOS window each loop. Ignored when --region is set.",
+    )
     parser.add_argument(
         "--mask-preset",
         action="append",

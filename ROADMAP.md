@@ -9,6 +9,7 @@
 - Local SSH batching queue with single-object and list payload support.
 - Mask presets and manual mask rectangles before OCR/vision.
 - Vision image-diff throttling for unchanged frames.
+- Foreground macOS window tracking with `--follow-active-window`.
 - VPS-side `push_caption.py` with file locking, sanitized window names, bounded timeline size, and fixed JSON read/write handling.
 - cognition helper for `realtime_surface()` and `mark_realtime_read_impl()`.
 - One-command `safe_check.sh`.
@@ -16,10 +17,9 @@
 
 ## Next
 
-1. Add active-window tracking on macOS so capture can follow the foreground app.
-2. Add per-window cursors instead of one global `_realtime:screen_cursor`.
-3. Add TTL cleanup for stale `_realtime:*` entries.
-4. Add an MCP read tool so wakeup can surface "unread count" first and pull full screen context only when needed.
+1. Add per-window cursors instead of one global `_realtime:screen_cursor`.
+2. Add TTL cleanup for stale `_realtime:*` entries.
+3. Add an MCP read tool so wakeup can surface "unread count" first and pull full screen context only when needed.
 
 ## Later
 

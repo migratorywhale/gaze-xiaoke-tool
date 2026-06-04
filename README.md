@@ -71,6 +71,12 @@ python gaze_local.py --caption-provider glm
 python gaze_local.py -w "Claude" --dry-run
 ```
 
+自动跟随当前前台窗口：
+
+```bash
+python gaze_local.py --follow-active-window --mask-preset mac-safe --dry-run
+```
+
 只截一块区域：
 
 ```bash
@@ -134,7 +140,6 @@ def mark_realtime_read(up_to_id=None):
 
 ## 我建议继续优化的地方
 
-1. 活动窗口自动跟踪：不用手动 `-w`，通过 macOS Quartz 读当前前台 app/window，按窗口自动分流。
-2. MCP 读工具而非 wakeup 灌入：wakeup 只给“有未读 N 条”，小克想看时再拉取，避免每次上下文被屏幕流污染。
-3. per-window cursor：现在只有全局 `_realtime:screen_cursor`，切窗口后可能互相压掉已读状态。
-4. TTL 清理：`_realtime:*` 是瞬时感知，不应该长期进记忆库；服务端可以定期丢弃超过几小时的 entries。
+1. MCP 读工具而非 wakeup 灌入：wakeup 只给“有未读 N 条”，小克想看时再拉取，避免每次上下文被屏幕流污染。
+2. per-window cursor：现在只有全局 `_realtime:screen_cursor`，切窗口后可能互相压掉已读状态。
+3. TTL 清理：`_realtime:*` 是瞬时感知，不应该长期进记忆库；服务端可以定期丢弃超过几小时的 entries。

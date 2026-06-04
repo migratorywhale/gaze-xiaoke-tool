@@ -24,6 +24,7 @@ This tool can observe screen contents. Treat every OCR line and vision caption a
 - Prefer `--dry-run` for first tests.
 - Prefer `--region` or `--window` over full-screen capture.
 - Prefer `--mask-preset mac-safe` when testing on a normal desktop.
+- Use `--follow-active-window` only after confirming the current foreground app is safe to observe.
 - Prefer full-screen target apps when using OCR/caption, so browser chrome and desktop notifications are hidden.
 - Use `GAZE_BOOKMARK_KEYWORDS` for local words that should be stripped before upload.
 
