@@ -13,7 +13,7 @@
 - `AGENTS.md`：给未来 Codex 的施工说明。
 - `gaze_local.py`：Mac 本地端，支持全屏、窗口模糊匹配、区域截屏、OCR、GLM vision caption、SSH push。
 - `push_caption.py`：VPS 端 stdin 接收器，修复原分享版 JSON 读取 bug，并加了锁、长度限制、窗口名清洗。
-- `cognition_gaze_patch.py`：给 cognition 类 MCP 服务导入用的 helper：`realtime_surface()` 和 `mark_realtime_read_impl()`。
+- `cognition_gaze_patch.py`：给 cognition 类 MCP 服务导入用的 helper：`realtime_surface()`、`read_realtime_impl()` 和 `mark_realtime_read_impl()`。
 - `requirements-macos.txt`：Mac 端依赖。
 - `.env.example`：环境变量模板。
 - `SECURITY.md`：隐私/密钥/生产接入边界。
@@ -127,10 +127,15 @@ echo '{"caption":"hello gaze","window":"test","source":"manual"}' \
 不要直接粘进身份/记忆文件。推荐只在服务端代码里导入 helper：
 
 ```python
-from cognition_gaze_patch import realtime_surface, mark_realtime_read_impl
+from cognition_gaze_patch import realtime_surface, read_realtime_impl, mark_realtime_read_impl
 
 # wakeup/surface 构造时：
-surface.update(realtime_surface(all_data))
+# 安静模式：只 surface 当前窗口、未读数、latest id，不直接塞屏幕内容。
+surface.update(realtime_surface(all_data, include_entries=False))
+
+@mcp.tool()
+def read_realtime(window_name="@current", since_id=None, limit=10, unread_only=True, mark_read=False):
+    return read_realtime_impl(_load_all, _save_all, window_name, since_id, limit, unread_only, mark_read)
 
 @mcp.tool()
 def mark_realtime_read(up_to_id=None, window_name=None):
@@ -139,11 +144,13 @@ def mark_realtime_read(up_to_id=None, window_name=None):
 
 修改服务端后重启对应进程，例如 `pm2 restart cognition`。
 
+`read_realtime(window_name="@current")` 会读取当前窗口；`window_name=None` 会读取全局时间线。`mark_read=True` 时，会在读取后推进对应 cursor。
+
 `window_name` 不传时，保持旧行为：推进全局 `_realtime:screen_cursor`。传窗口名时，只推进 `_realtime:window_cursor:<window>`，适合小克只看完当前窗口、不想把其他窗口标成已读。
 
 `push_caption.py` 默认清理 6 小时以前的 `_realtime:*` 条目；可以在 VPS 环境里设 `GAZE_TTL_SECONDS=0` 关闭。也可以把远端命令写成 `GAZE_REMOTE_COMMAND=GAZE_TTL_SECONDS=21600 python3 /root/mcp-memory-server/push_caption.py`。
 
 ## 我建议继续优化的地方
 
-1. MCP 读工具而非 wakeup 灌入：wakeup 只给“有未读 N 条”，小克想看时再拉取，避免每次上下文被屏幕流污染。
-2. 更细的隐私遮罩预设：浏览器地址栏/书签栏按应用类型自动遮。
+1. 更细的隐私遮罩预设：浏览器地址栏/书签栏按应用类型自动遮。
+2. 小启动器：用简单 UI 选窗口、区域、dry-run/upload。

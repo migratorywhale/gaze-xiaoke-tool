@@ -80,7 +80,7 @@ echo "== cognition helper =="
 "$PY" - <<'PY'
 import json
 
-from cognition_gaze_patch import mark_realtime_read_impl, realtime_surface
+from cognition_gaze_patch import mark_realtime_read_impl, read_realtime_impl, realtime_surface
 
 data = {
     "_realtime:screen_caption": json.dumps([
@@ -103,6 +103,13 @@ assert surface["realtime_screen_unread_count"] == 3
 assert surface["realtime_window_unread_counts"] == {"A": 2, "B": 1}
 assert surface["realtime_current_window_unread_count"] == 1
 
+slim_surface = realtime_surface(data, max_age_sec=999999999, include_entries=False)
+assert slim_surface["realtime_screen"] is None
+assert slim_surface["realtime_screen_unread"] is None
+assert slim_surface["realtime_windows"] == {"A": None, "B": None}
+assert slim_surface["realtime_window_latest_ids"] == {"A": 2, "B": 3}
+assert slim_surface["realtime_current_window_unread_count"] == 1
+
 def load_all():
     return data
 
@@ -110,10 +117,28 @@ def save_all(next_data):
     data.clear()
     data.update(next_data)
 
+read = read_realtime_impl(load_all, save_all, window_name="@current", limit=1, unread_only=True, mark_read=True)
+assert read["scope"] == "window"
+assert read["window"] == "B"
+assert read["count"] == 1
+assert read["entries"][0]["caption"] == "b1"
+assert read["marked_read"] is True
+assert read["new_cursor"] == 3
+surface = realtime_surface(data, max_age_sec=999999999)
+assert surface["realtime_window_unread_counts"] == {"A": 2, "B": 0}
+
+read = read_realtime_impl(load_all, window_name=None, limit=2, unread_only=False)
+assert read["scope"] == "timeline"
+assert [entry["id"] for entry in read["entries"]] == [2, 3]
+
+missing = read_realtime_impl(load_all, window_name="missing")
+assert missing["reason"] == "window_not_found"
+assert missing["count"] == 0
+
 result = mark_realtime_read_impl(load_all, save_all, window_name="A")
 assert result == {"updated": True, "window": "A", "new_cursor": 2}
 surface = realtime_surface(data, max_age_sec=999999999)
-assert surface["realtime_window_unread_counts"] == {"A": 0, "B": 1}
+assert surface["realtime_window_unread_counts"] == {"A": 0, "B": 0}
 
 result = mark_realtime_read_impl(load_all, save_all)
 assert result == {"updated": True, "new_cursor": 3}

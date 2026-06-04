@@ -14,13 +14,14 @@
 - TTL cleanup for stale `_realtime:*` entries.
 - cognition helper for `realtime_surface()` and `mark_realtime_read_impl()`.
 - Per-window cursors via `_realtime:window_cursor:<window>`.
+- `read_realtime_impl()` helper for pull-on-demand screen context.
 - One-command `safe_check.sh`.
 - Private GitHub repo with `.env` and `.venv` ignored.
 
 ## Next
 
-1. Add an MCP read tool so wakeup can surface "unread count" first and pull full screen context only when needed.
-2. Add app-aware mask presets for browser chrome, menu bars, and notification-heavy apps.
+1. Add app-aware mask presets for browser chrome, menu bars, and notification-heavy apps.
+2. Add a tiny launcher UI for selecting window/region and toggling dry-run/upload.
 
 ## Later
 

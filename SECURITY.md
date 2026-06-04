@@ -28,6 +28,7 @@ This tool can observe screen contents. Treat every OCR line and vision caption a
 - Prefer full-screen target apps when using OCR/caption, so browser chrome and desktop notifications are hidden.
 - Use `GAZE_BOOKMARK_KEYWORDS` for local words that should be stripped before upload.
 - Keep `GAZE_TTL_SECONDS` short enough that `_realtime:*` remains temporary perception, not long-term memory.
+- Prefer `realtime_surface(..., include_entries=False)` in wakeup, then pull entries with `read_realtime` only when needed.
 
 ## Production Changes
 
