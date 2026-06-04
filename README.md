@@ -4,13 +4,20 @@
 
 我做成了保守版：默认可以 `--dry-run` 测试，不会直接上传屏幕内容；服务端集成也先给 helper 文件，不直接改小克的记忆库或生产服务。
 
+## 老板一句话版
+
+先只跑 `--dry-run`，确认安全后再填 `.env` 上传。真正接小克服务端前，先读 `SECURITY.md` 和 `ROADMAP.md`。
+
 ## 文件
 
+- `AGENTS.md`：给未来 Codex 的施工说明。
 - `gaze_local.py`：Mac 本地端，支持全屏、窗口模糊匹配、区域截屏、OCR、GLM vision caption、SSH push。
 - `push_caption.py`：VPS 端 stdin 接收器，修复原分享版 JSON 读取 bug，并加了锁、长度限制、窗口名清洗。
 - `cognition_gaze_patch.py`：给 cognition 类 MCP 服务导入用的 helper：`realtime_surface()` 和 `mark_realtime_read_impl()`。
 - `requirements-macos.txt`：Mac 端依赖。
 - `.env.example`：环境变量模板。
+- `SECURITY.md`：隐私/密钥/生产接入边界。
+- `ROADMAP.md`：后续优化路线。
 
 ## 安装 Mac 本地端
 
