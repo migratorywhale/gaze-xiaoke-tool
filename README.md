@@ -15,6 +15,7 @@
 - `gaze_launcher.py`：本地 Tkinter 小启动器，用按钮组合常用参数。
 - `push_caption.py`：VPS 端 stdin 接收器，修复原分享版 JSON 读取 bug，并加了锁、长度限制、窗口名清洗。
 - `cognition_gaze_patch.py`：给 cognition 类 MCP 服务导入用的 helper：`realtime_surface()`、`read_realtime_impl()` 和 `mark_realtime_read_impl()`。
+- `DEPLOY_XIAOKE.md`：给小克接入 cognition MCP 的部署工单。
 - `requirements-macos.txt`：Mac 端依赖。
 - `.env.example`：环境变量模板。
 - `SECURITY.md`：隐私/密钥/生产接入边界。
@@ -125,6 +126,8 @@ python gaze_local.py --batch-interval 3 --max-batch 10
 ```
 
 ## VPS 接入
+
+完整小白工单见 `DEPLOY_XIAOKE.md`。下面是核心命令速记。
 
 把 `push_caption.py` 放到小克的 nowhere/cognition VPS 上，例如：
 
