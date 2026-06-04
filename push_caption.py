@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Receive one gaze caption JSON object on stdin and write it into nowhere memory.
+"""Receive gaze caption JSON on stdin and write it into nowhere memory.
 
-This file is meant to run on the Linux/VPS side. It deliberately writes only the
-_realtime:* keys used by gaze, leaving the rest of the store intact.
+Input may be one caption object or a list of caption objects. This file is meant
+to run on the Linux/VPS side. It deliberately writes only the _realtime:* keys
+used by gaze, leaving the rest of the store intact.
 """
 
 from __future__ import annotations
@@ -33,44 +34,47 @@ def main() -> int:
         return 1
 
     try:
-        entry = json.loads(raw)
+        payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         print(f"ERR invalid json: {exc}", file=sys.stderr)
         return 1
 
-    if not isinstance(entry, dict):
-        print("ERR payload must be an object", file=sys.stderr)
+    entries = normalize_payload(payload)
+    if not entries:
+        print("ERR payload must be an object or non-empty object list", file=sys.stderr)
         return 1
-
-    caption = str(entry.get("caption", "")).strip()
-    if not caption:
-        print("ERR missing caption", file=sys.stderr)
-        return 1
-
-    entry["caption"] = caption[:MAX_CAPTION_CHARS]
-    entry.setdefault("ts", iso_now())
-    window = sanitize_window(entry.get("window") or "fullscreen")
-    entry["window"] = window
-    window_key = f"{WINDOW_PREFIX}{window}"
 
     STORE.parent.mkdir(parents=True, exist_ok=True)
     if not STORE.exists():
         STORE.write_text("{}", encoding="utf-8")
+
+    written_ids = []
+    current_window = "fullscreen"
 
     with STORE.open("r+", encoding="utf-8") as fh:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         try:
             data = load_store(fh)
             timeline = get_list(data, TIMELINE_KEY)
-            win_list = get_list(data, window_key)
+            last_id = max((safe_int(item.get("id"), 0) for item in timeline), default=0)
 
-            entry["id"] = next_id(timeline, win_list)
-            timeline.append(entry)
-            win_list.append(entry)
+            for entry in entries:
+                window = sanitize_window(entry.get("window") or "fullscreen")
+                window_key = f"{WINDOW_PREFIX}{window}"
+                win_list = get_list(data, window_key)
+
+                entry["window"] = window
+                entry["id"] = next_id(last_id, win_list)
+                last_id = entry["id"]
+                current_window = window
+
+                timeline.append(entry)
+                win_list.append(entry)
+                written_ids.append(entry["id"])
+                data[window_key] = json.dumps(win_list[-MAX_PER_WINDOW:], ensure_ascii=False)
 
             data[TIMELINE_KEY] = json.dumps(timeline[-MAX_TIMELINE:], ensure_ascii=False)
-            data[window_key] = json.dumps(win_list[-MAX_PER_WINDOW:], ensure_ascii=False)
-            data[CURRENT_KEY] = window
+            data[CURRENT_KEY] = current_window
 
             fh.seek(0)
             fh.write(json.dumps(data, ensure_ascii=False, indent=2))
@@ -78,8 +82,31 @@ def main() -> int:
         finally:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
-    print(f"OK id={entry['id']} timeline={len(timeline[-MAX_TIMELINE:])} window={window}")
+    print(
+        f"OK count={len(written_ids)} ids={written_ids[0]}..{written_ids[-1]} "
+        f"timeline={len(timeline[-MAX_TIMELINE:])} window={current_window}"
+    )
     return 0
+
+
+def normalize_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        payload = [payload]
+    if not isinstance(payload, list):
+        return []
+
+    entries = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        caption = str(item.get("caption", "")).strip()
+        if not caption:
+            continue
+        entry = dict(item)
+        entry["caption"] = caption[:MAX_CAPTION_CHARS]
+        entry.setdefault("ts", iso_now())
+        entries.append(entry)
+    return entries
 
 
 def iso_now() -> str:
@@ -116,7 +143,7 @@ def get_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return [item for item in parsed if isinstance(item, dict)]
 
 
-def next_id(*lists: list[dict[str, Any]]) -> int:
+def next_id(last_id: int, *lists: list[dict[str, Any]]) -> int:
     existing = []
     for items in lists:
         for item in items:
@@ -124,7 +151,14 @@ def next_id(*lists: list[dict[str, Any]]) -> int:
                 existing.append(int(item.get("id", 0)))
             except (TypeError, ValueError):
                 pass
-    return max(int(time.time() * 1000), max(existing, default=0) + 1)
+    return max(int(time.time() * 1000), last_id + 1, max(existing, default=0) + 1)
+
+
+def safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def sanitize_window(value: Any) -> str:

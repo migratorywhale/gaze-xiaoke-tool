@@ -17,7 +17,7 @@ from io import BytesIO
 from typing import Any
 
 from dotenv import load_dotenv
-from PIL import Image, ImageGrab
+from PIL import Image, ImageDraw, ImageGrab
 
 
 DEFAULT_PROMPT = """看截图，像跟朋友吐槽一样发一条弹幕。
@@ -31,6 +31,8 @@ DEFAULT_PROMPT = """看截图，像跟朋友吐槽一样发一条弹幕。
 输出一句:"""
 
 DEFAULT_REMOTE_COMMAND = "python3 /root/mcp-memory-server/push_caption.py"
+PUSH_IDLE = {"empty", "waiting"}
+MASK_PRESETS = ("menu-bar", "browser-top", "dock-bottom", "mac-safe")
 
 NOISE_REGEXES = [
     re.compile(r"https?://\S+", re.I),
@@ -247,6 +249,65 @@ def screenshot(target: CaptureTarget) -> Image.Image:
     return ImageGrab.grab(bbox=target.bbox, all_screens=False)
 
 
+def apply_masks(image: Image.Image, presets: list[str], rect_values: list[str]) -> Image.Image:
+    if not presets and not rect_values:
+        return image
+
+    masked = image.copy()
+    draw = ImageDraw.Draw(masked)
+    width, height = masked.size
+
+    for preset in presets:
+        for rect in preset_rects(preset, width, height):
+            draw.rectangle(rect, fill=(0, 0, 0))
+
+    for value in rect_values:
+        rect = parse_mask_rect(value, width, height)
+        draw.rectangle(rect, fill=(0, 0, 0))
+
+    return masked
+
+
+def preset_rects(name: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
+    top_menu = min(36, height)
+    browser_top = min(140, height)
+    dock = min(120, height)
+
+    if name == "menu-bar":
+        return [(0, 0, width, top_menu)]
+    if name == "browser-top":
+        return [(0, 0, width, browser_top)]
+    if name == "dock-bottom":
+        return [(0, max(0, height - dock), width, height)]
+    if name == "mac-safe":
+        return [(0, 0, width, min(88, height)), (0, max(0, height - dock), width, height)]
+    raise ValueError(f"unknown mask preset: {name}")
+
+
+def parse_mask_rect(value: str, image_width: int, image_height: int) -> tuple[int, int, int, int]:
+    left, top, right, bottom = parse_region(value)
+    if left < 0:
+        right = image_width + right
+        left = image_width + left
+    if top < 0:
+        bottom = image_height + bottom
+        top = image_height + top
+    return clip_rect((left, top, right, bottom), image_width, image_height)
+
+
+def clip_rect(rect: tuple[int, int, int, int], width: int, height: int) -> tuple[int, int, int, int]:
+    left, top, right, bottom = rect
+    left = max(0, min(width, left))
+    right = max(0, min(width, right))
+    top = max(0, min(height, top))
+    bottom = max(0, min(height, bottom))
+    if right < left:
+        left, right = right, left
+    if bottom < top:
+        top, bottom = bottom, top
+    return left, top, right, bottom
+
+
 def shrink(image: Image.Image, max_side: int) -> Image.Image:
     width, height = image.size
     if max(width, height) <= max_side:
@@ -290,15 +351,81 @@ def make_entry(source: str, caption: str, target: CaptureTarget) -> dict[str, An
     }
 
 
-def push_entry(
-    entry: dict[str, Any],
+class EntryPusher:
+    def __init__(
+        self,
+        *,
+        ssh_host: str | None,
+        remote_command: str,
+        dry_run: bool,
+        retries: int,
+        batch_interval: float,
+        max_batch: int,
+        max_queue: int,
+    ):
+        self.ssh_host = ssh_host
+        self.remote_command = remote_command
+        self.dry_run = dry_run
+        self.retries = retries
+        self.batch_interval = max(0.0, batch_interval)
+        self.max_batch = max(1, max_batch)
+        self.max_queue = max(self.max_batch, max_queue)
+        self.queue: list[dict[str, Any]] = []
+        self.next_flush_time = time.time() + self.batch_interval
+
+    def enqueue(self, entry: dict[str, Any]) -> tuple[bool, str]:
+        self.queue.append(entry)
+        dropped = 0
+        if len(self.queue) > self.max_queue:
+            dropped = len(self.queue) - self.max_queue
+            del self.queue[:dropped]
+
+        if self.batch_interval == 0 or len(self.queue) >= self.max_batch:
+            ok, msg = self.flush(force=True)
+        else:
+            ok, msg = True, f"queued {len(self.queue)}"
+
+        if dropped:
+            msg = f"{msg}; dropped_oldest={dropped}"
+        return ok, msg
+
+    def maybe_flush(self) -> tuple[bool, str]:
+        if not self.queue:
+            return True, "empty"
+        if time.time() < self.next_flush_time:
+            return True, "waiting"
+        return self.flush(force=True)
+
+    def flush(self, *, force: bool = False) -> tuple[bool, str]:
+        if not self.queue:
+            return True, "empty"
+        if not force and time.time() < self.next_flush_time:
+            return True, f"queued {len(self.queue)}"
+
+        entries = list(self.queue)
+        payload = json.dumps(entries[0] if len(entries) == 1 else entries, ensure_ascii=False)
+        ok, msg = send_payload(
+            payload,
+            ssh_host=self.ssh_host,
+            remote_command=self.remote_command,
+            dry_run=self.dry_run,
+            retries=self.retries,
+        )
+        self.next_flush_time = time.time() + self.batch_interval
+        if ok:
+            del self.queue[: len(entries)]
+            return True, f"pushed {len(entries)}: {msg}"
+        return False, f"push failed for {len(entries)} queued: {msg}"
+
+
+def send_payload(
+    payload: str,
     *,
     ssh_host: str | None,
     remote_command: str,
     dry_run: bool,
     retries: int,
 ) -> tuple[bool, str]:
-    payload = json.dumps(entry, ensure_ascii=False)
 
     if dry_run:
         print(payload)
@@ -342,6 +469,18 @@ def push_entry(
     return False, last_error
 
 
+def image_signature(image: Image.Image) -> bytes:
+    return image.convert("L").resize((32, 32)).tobytes()
+
+
+def image_diff_score(left: bytes | None, right: bytes) -> float:
+    if left is None:
+        return 255.0
+    if len(left) != len(right):
+        return 255.0
+    return sum(abs(a - b) for a, b in zip(left, right)) / len(right)
+
+
 def env_bookmark_keywords() -> list[str]:
     extra = os.getenv("GAZE_BOOKMARK_KEYWORDS", "")
     return DEFAULT_BOOKMARK_KEYWORDS + [item.strip() for item in extra.split(",") if item.strip()]
@@ -351,6 +490,15 @@ def run(args: argparse.Namespace) -> int:
     load_dotenv()
     target = capture_target(args.window, args.region)
     bookmark_keywords = env_bookmark_keywords()
+    pusher = EntryPusher(
+        ssh_host=args.ssh_host or os.getenv("GAZE_SSH_HOST"),
+        remote_command=args.remote_command or os.getenv("GAZE_REMOTE_COMMAND", DEFAULT_REMOTE_COMMAND),
+        dry_run=args.dry_run,
+        retries=args.retries,
+        batch_interval=args.batch_interval,
+        max_batch=args.max_batch,
+        max_queue=args.max_queue,
+    )
 
     ocr = None
     if not args.no_ocr:
@@ -372,11 +520,12 @@ def run(args: argparse.Namespace) -> int:
             print(f"[warn] {exc}; vision captions disabled", file=sys.stderr)
 
     prev_texts: list[str] = []
+    prev_caption_signature: bytes | None = None
     next_caption_time = 0.0
 
     while True:
         started = time.time()
-        image = screenshot(target)
+        image = apply_masks(screenshot(target), args.mask_preset, args.mask_rect)
 
         if ocr:
             curr_texts = ocr.read(image, min_chars=args.ocr_min_chars, min_score=args.ocr_min_score)
@@ -386,35 +535,36 @@ def run(args: argparse.Namespace) -> int:
                 cleaned = clean_caption(f"[屏上文字] {joined}", bookmark_keywords)
                 if cleaned:
                     entry = make_entry("ocr", cleaned, target)
-                    ok, msg = push_entry(
-                        entry,
-                        ssh_host=args.ssh_host or os.getenv("GAZE_SSH_HOST"),
-                        remote_command=args.remote_command or os.getenv("GAZE_REMOTE_COMMAND", DEFAULT_REMOTE_COMMAND),
-                        dry_run=args.dry_run,
-                        retries=args.retries,
-                    )
+                    ok, msg = pusher.enqueue(entry)
                     print_status("OCR", cleaned, ok, msg)
             prev_texts = curr_texts
 
         if captioner and started >= next_caption_time:
+            signature = image_signature(image)
+            diff_score = image_diff_score(prev_caption_signature, signature)
             try:
-                caption = captioner.caption(image)
-                cleaned = clean_caption(caption, bookmark_keywords)
-                if cleaned:
-                    entry = make_entry("cap", cleaned, target)
-                    ok, msg = push_entry(
-                        entry,
-                        ssh_host=args.ssh_host or os.getenv("GAZE_SSH_HOST"),
-                        remote_command=args.remote_command or os.getenv("GAZE_REMOTE_COMMAND", DEFAULT_REMOTE_COMMAND),
-                        dry_run=args.dry_run,
-                        retries=args.retries,
-                    )
-                    print_status("CAP", cleaned, ok, msg)
+                if args.vision_min_diff <= 0 or diff_score >= args.vision_min_diff:
+                    caption = captioner.caption(image)
+                    cleaned = clean_caption(caption, bookmark_keywords)
+                    if cleaned:
+                        entry = make_entry("cap", cleaned, target)
+                        ok, msg = pusher.enqueue(entry)
+                        print_status("CAP", cleaned, ok, msg)
+                    prev_caption_signature = signature
+                elif args.verbose:
+                    print(f"[CAP] skipped unchanged frame diff={diff_score:.2f}")
             except Exception as exc:
                 print(f"[CAP] error: {exc}", file=sys.stderr)
             next_caption_time = time.time() + args.caption_interval
 
+        ok, msg = pusher.maybe_flush()
+        if msg not in PUSH_IDLE:
+            print_status("PUSH", msg, ok, "")
+
         if args.once:
+            ok, msg = pusher.flush(force=True)
+            if msg not in PUSH_IDLE:
+                print_status("PUSH", msg, ok, "")
             return 0
 
         elapsed = time.time() - started
@@ -430,6 +580,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Mac gaze client for realtime screen captions.")
     parser.add_argument("--window", "-w", help="Fuzzy match a macOS window/app name.")
     parser.add_argument("--region", help="Capture x,y,width,height instead of full screen.")
+    parser.add_argument(
+        "--mask-preset",
+        action="append",
+        choices=MASK_PRESETS,
+        default=[],
+        help="Black out common privacy zones before OCR/vision. Can be repeated.",
+    )
+    parser.add_argument(
+        "--mask-rect",
+        action="append",
+        default=[],
+        help="Black out x,y,width,height before OCR/vision. Negative x/y count from right/bottom.",
+    )
     parser.add_argument("--caption-provider", choices=["glm", "none"], default="glm")
     parser.add_argument("--glm-model", default="glm-4v-flash")
     parser.add_argument("--glm-endpoint", default="https://open.bigmodel.cn/api/paas/v4/chat/completions")
@@ -437,14 +600,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-ocr", action="store_true")
     parser.add_argument("--ocr-interval", type=float, default=3.0)
     parser.add_argument("--caption-interval", type=float, default=10.0)
+    parser.add_argument("--vision-min-diff", type=float, default=3.0, help="Skip vision if 32x32 mean diff is below this. Use 0 to disable.")
     parser.add_argument("--ocr-min-score", type=float, default=0.6)
     parser.add_argument("--ocr-min-chars", type=int, default=3)
     parser.add_argument("--max-ocr-chars", type=int, default=200)
     parser.add_argument("--ssh-host")
     parser.add_argument("--remote-command")
     parser.add_argument("--retries", type=int, default=2)
+    parser.add_argument("--batch-interval", type=float, default=2.0, help="Seconds to batch entries before one SSH push. Use 0 for immediate push.")
+    parser.add_argument("--max-batch", type=int, default=8)
+    parser.add_argument("--max-queue", type=int, default=50)
     parser.add_argument("--dry-run", action="store_true", help="Print payloads instead of SSH pushing them.")
     parser.add_argument("--once", action="store_true", help="Capture one cycle, then exit.")
+    parser.add_argument("--verbose", action="store_true")
     return parser
 
 

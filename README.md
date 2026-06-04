@@ -37,6 +37,12 @@ GAZE_BOOKMARK_KEYWORDS=你书签栏里不想被OCR推送的词
 
 ## 本地安全测试
 
+一键安全检查：
+
+```bash
+./safe_check.sh
+```
+
 只测截屏和 OCR，不发到 VPS：
 
 ```bash
@@ -69,6 +75,26 @@ python gaze_local.py -w "Claude" --dry-run
 
 ```bash
 python gaze_local.py --region 0,80,1200,760 --dry-run
+```
+
+遮掉常见隐私区域后再识别：
+
+```bash
+python gaze_local.py --mask-preset mac-safe --dry-run
+python gaze_local.py --mask-preset browser-top --mask-preset dock-bottom --dry-run
+python gaze_local.py --mask-rect 0,0,1200,140 --dry-run
+```
+
+减少重复 vision 调用：
+
+```bash
+python gaze_local.py --vision-min-diff 5 --dry-run
+```
+
+批量推送设置：
+
+```bash
+python gaze_local.py --batch-interval 3 --max-batch 10
 ```
 
 ## VPS 接入
@@ -108,10 +134,7 @@ def mark_realtime_read(up_to_id=None):
 
 ## 我建议继续优化的地方
 
-1. 用队列/批量 SSH：现在每条 caption 一次 SSH，Windows 更痛，Mac 也浪费。可以做本地队列，每 2-5 秒批量推送。
-2. 本地红线遮罩：上传前先在图像层裁掉浏览器地址栏、菜单栏、Dock 区域，再 OCR/vision，隐私比纯 regex 稳。
-3. 活动窗口自动跟踪：不用手动 `-w`，通过 macOS Quartz 读当前前台 app/window，按窗口自动分流。
-4. 图像差分去重：画面没变时只跑 OCR，不跑 vision，省钱也少噪音。
-5. MCP 读工具而非 wakeup 灌入：wakeup 只给“有未读 N 条”，小克想看时再拉取，避免每次上下文被屏幕流污染。
-6. per-window cursor：现在只有全局 `_realtime:screen_cursor`，切窗口后可能互相压掉已读状态。
-7. TTL 清理：`_realtime:*` 是瞬时感知，不应该长期进记忆库；服务端可以定期丢弃超过几小时的 entries。
+1. 活动窗口自动跟踪：不用手动 `-w`，通过 macOS Quartz 读当前前台 app/window，按窗口自动分流。
+2. MCP 读工具而非 wakeup 灌入：wakeup 只给“有未读 N 条”，小克想看时再拉取，避免每次上下文被屏幕流污染。
+3. per-window cursor：现在只有全局 `_realtime:screen_cursor`，切窗口后可能互相压掉已读状态。
+4. TTL 清理：`_realtime:*` 是瞬时感知，不应该长期进记忆库；服务端可以定期丢弃超过几小时的 entries。

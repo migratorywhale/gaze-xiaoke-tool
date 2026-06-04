@@ -17,6 +17,7 @@ Useful checks:
 . .venv/bin/activate
 python -m py_compile gaze_local.py push_caption.py cognition_gaze_patch.py
 python gaze_local.py --once --dry-run --no-ocr --caption-provider none
+./safe_check.sh
 ```
 
 For server-side testing, use a temporary store first:
