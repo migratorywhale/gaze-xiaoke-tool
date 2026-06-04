@@ -33,6 +33,18 @@ DEFAULT_PROMPT = """看截图，像跟朋友吐槽一样发一条弹幕。
 DEFAULT_REMOTE_COMMAND = "python3 /root/mcp-memory-server/push_caption.py"
 PUSH_IDLE = {"empty", "waiting"}
 MASK_PRESETS = ("menu-bar", "browser-top", "dock-bottom", "mac-safe")
+BROWSER_APP_HINTS = (
+    "arc",
+    "brave",
+    "chromium",
+    "dia",
+    "firefox",
+    "google chrome",
+    "microsoft edge",
+    "opera",
+    "safari",
+    "vivaldi",
+)
 SYSTEM_WINDOW_OWNERS = {
     "Control Center",
     "Dock",
@@ -69,6 +81,7 @@ DEFAULT_BOOKMARK_KEYWORDS = [
 class CaptureTarget:
     bbox: tuple[int, int, int, int] | None
     label: str
+    app_name: str | None = None
 
 
 class GLMCaptioner:
@@ -243,7 +256,7 @@ def find_macos_window(needle: str) -> CaptureTarget | None:
         return None
 
     _, owner, title, bounds = max(matches, key=lambda item: item[0])
-    return target_from_window_bounds(bounds, title or owner or needle)
+    return target_from_window_bounds(bounds, title or owner or needle, app_name=owner or None)
 
 
 def find_active_macos_window() -> CaptureTarget | None:
@@ -281,7 +294,7 @@ def find_active_macos_window() -> CaptureTarget | None:
         return None
 
     _, owner, title, bounds = max(candidates, key=lambda item: item[0])
-    return target_from_window_bounds(bounds, title or owner)
+    return target_from_window_bounds(bounds, title or owner, app_name=owner or None)
 
 
 def frontmost_app_name() -> str | None:
@@ -297,13 +310,13 @@ def frontmost_app_name() -> str | None:
     return str(name) if name else None
 
 
-def target_from_window_bounds(bounds: Any, label: str) -> CaptureTarget:
+def target_from_window_bounds(bounds: Any, label: str, app_name: str | None = None) -> CaptureTarget:
     scale = mac_screen_scale()
     x = int(float(bounds["X"]) * scale)
     y = int(float(bounds["Y"]) * scale)
     width = int(float(bounds["Width"]) * scale)
     height = int(float(bounds["Height"]) * scale)
-    return CaptureTarget(bbox=(x, y, x + width, y + height), label=label)
+    return CaptureTarget(bbox=(x, y, x + width, y + height), label=label, app_name=app_name)
 
 
 def mac_screen_scale() -> float:
@@ -339,6 +352,30 @@ def apply_masks(image: Image.Image, presets: list[str], rect_values: list[str]) 
         draw.rectangle(rect, fill=(0, 0, 0))
 
     return masked
+
+
+def effective_mask_presets(target: CaptureTarget, presets: list[str], auto_mask: bool) -> list[str]:
+    if not auto_mask:
+        return list(presets)
+    return unique_presets([*presets, *auto_mask_presets(target)])
+
+
+def auto_mask_presets(target: CaptureTarget) -> list[str]:
+    app_text = (target.app_name or "").lower()
+    if any(hint in app_text for hint in BROWSER_APP_HINTS):
+        return ["browser-top"]
+    return []
+
+
+def unique_presets(presets: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for preset in presets:
+        if preset in seen:
+            continue
+        seen.add(preset)
+        result.append(preset)
+    return result
 
 
 def preset_rects(name: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
@@ -416,12 +453,15 @@ def clean_caption(text: str, bookmark_keywords: list[str], min_keep: int = 3) ->
 
 
 def make_entry(source: str, caption: str, target: CaptureTarget) -> dict[str, Any]:
-    return {
+    entry = {
         "source": source,
         "caption": caption,
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
         "window": target.label,
     }
+    if target.app_name:
+        entry["app"] = target.app_name
+    return entry
 
 
 class EntryPusher:
@@ -595,19 +635,27 @@ def run(args: argparse.Namespace) -> int:
     prev_texts: list[str] = []
     prev_caption_signature: bytes | None = None
     next_caption_time = 0.0
-    last_target_key: tuple[str, tuple[int, int, int, int] | None] | None = None
+    last_target_key: tuple[str, tuple[int, int, int, int] | None, str | None] | None = None
+    last_mask_key: tuple[str, ...] | None = None
 
     while True:
         started = time.time()
         target = current_capture_target(args, fallback_target)
-        target_key = (target.label, target.bbox)
+        target_key = (target.label, target.bbox, target.app_name)
+        mask_presets = effective_mask_presets(target, args.mask_preset, args.auto_mask)
+        mask_key = tuple(mask_presets)
         if target_key != last_target_key:
             prev_texts = []
             prev_caption_signature = None
             last_target_key = target_key
             if args.verbose:
                 print(f"[target] {target.label}")
-        image = apply_masks(screenshot(target), args.mask_preset, args.mask_rect)
+        if args.verbose and args.auto_mask and mask_key != last_mask_key:
+            last_mask_key = mask_key
+            auto_presets = auto_mask_presets(target)
+            if auto_presets:
+                print(f"[mask] auto {target.app_name or target.label}: {','.join(auto_presets)}")
+        image = apply_masks(screenshot(target), mask_presets, args.mask_rect)
 
         if ocr:
             curr_texts = ocr.read(image, min_chars=args.ocr_min_chars, min_score=args.ocr_min_score)
@@ -673,6 +721,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=MASK_PRESETS,
         default=[],
         help="Black out common privacy zones before OCR/vision. Can be repeated.",
+    )
+    parser.add_argument(
+        "--auto-mask",
+        action="store_true",
+        help="Add app-aware privacy masks, such as browser chrome masking for browser windows.",
     )
     parser.add_argument(
         "--mask-rect",

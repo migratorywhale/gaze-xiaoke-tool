@@ -24,7 +24,9 @@ from gaze_local import (
     CaptureTarget,
     EntryPusher,
     apply_masks,
+    auto_mask_presets,
     clean_caption,
+    effective_mask_presets,
     find_active_macos_window,
     frontmost_app_name,
     image_diff_score,
@@ -42,6 +44,12 @@ masked = apply_masks(img, ["menu-bar"], ["0,80,200,20"])
 assert masked.getpixel((10, 10)) == (0, 0, 0)
 assert masked.getpixel((10, 90)) == (0, 0, 0)
 assert masked.getpixel((100, 50)) == (255, 255, 255)
+
+browser_target = CaptureTarget(None, "Arcadia", app_name="Google Chrome")
+plain_target = CaptureTarget(None, "Arcadia")
+assert auto_mask_presets(browser_target) == ["browser-top"]
+assert auto_mask_presets(plain_target) == []
+assert effective_mask_presets(browser_target, ["mac-safe", "browser-top"], True) == ["mac-safe", "browser-top"]
 
 same = image_diff_score(image_signature(img), image_signature(img))
 changed = image_diff_score(image_signature(img), image_signature(masked))
@@ -215,7 +223,7 @@ if [ "${GAZE_SKIP_SCREEN_CHECK:-0}" = "1" ]; then
 else
   echo "== screen permission dry-run =="
   "$PY" gaze_local.py --once --dry-run --no-ocr --caption-provider none --mask-preset mac-safe
-  "$PY" gaze_local.py --once --dry-run --no-ocr --caption-provider none --follow-active-window --mask-preset mac-safe
+  "$PY" gaze_local.py --once --dry-run --no-ocr --caption-provider none --follow-active-window --auto-mask --mask-preset mac-safe
 fi
 
 echo "safe_check OK"

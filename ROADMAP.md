@@ -8,6 +8,7 @@
 - Dry-run mode for safe local testing.
 - Local SSH batching queue with single-object and list payload support.
 - Mask presets and manual mask rectangles before OCR/vision.
+- App-aware auto masking for common browser windows.
 - Vision image-diff throttling for unchanged frames.
 - Foreground macOS window tracking with `--follow-active-window`.
 - VPS-side `push_caption.py` with file locking, sanitized window names, bounded timeline size, and fixed JSON read/write handling.
@@ -20,7 +21,7 @@
 
 ## Next
 
-1. Add app-aware mask presets for browser chrome, menu bars, and notification-heavy apps.
+1. Add more precise mask presets for menu bars, notifications, and per-browser toolbar heights.
 2. Add a tiny launcher UI for selecting window/region and toggling dry-run/upload.
 
 ## Later

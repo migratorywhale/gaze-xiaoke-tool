@@ -11,7 +11,7 @@
 ## 文件
 
 - `AGENTS.md`：给未来 Codex 的施工说明。
-- `gaze_local.py`：Mac 本地端，支持全屏、窗口模糊匹配、区域截屏、OCR、GLM vision caption、SSH push。
+- `gaze_local.py`：Mac 本地端，支持全屏、窗口模糊匹配、区域截屏、OCR、GLM vision caption、自动遮罩、SSH push。
 - `push_caption.py`：VPS 端 stdin 接收器，修复原分享版 JSON 读取 bug，并加了锁、长度限制、窗口名清洗。
 - `cognition_gaze_patch.py`：给 cognition 类 MCP 服务导入用的 helper：`realtime_surface()`、`read_realtime_impl()` 和 `mark_realtime_read_impl()`。
 - `requirements-macos.txt`：Mac 端依赖。
@@ -92,6 +92,12 @@ python gaze_local.py --mask-preset browser-top --mask-preset dock-bottom --dry-r
 python gaze_local.py --mask-rect 0,0,1200,140 --dry-run
 ```
 
+根据当前 app 自动加隐私遮罩：
+
+```bash
+python gaze_local.py --follow-active-window --auto-mask --dry-run
+```
+
 减少重复 vision 调用：
 
 ```bash
@@ -152,5 +158,5 @@ def mark_realtime_read(up_to_id=None, window_name=None):
 
 ## 我建议继续优化的地方
 
-1. 更细的隐私遮罩预设：浏览器地址栏/书签栏按应用类型自动遮。
+1. 更细的隐私遮罩预设：菜单栏、通知区域、不同浏览器顶部高度。
 2. 小启动器：用简单 UI 选窗口、区域、dry-run/upload。
