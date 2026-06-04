@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 
 .env
+.gaze_mcp_connection.txt
 .venv/
 
 /tmp/

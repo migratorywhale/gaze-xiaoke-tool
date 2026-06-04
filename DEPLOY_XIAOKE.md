@@ -1,8 +1,8 @@
-# 给小克接入 MCP 的部署工单
+# 给小克接入独立 Gaze MCP 的部署工单
 
 ## 先讲人话
 
-这个工具不是一个新的独立 MCP server。它更像给小克现有的 memory MCP 服务加一只“实时读屏抽屉”：
+gaze 现在不是 memory MCP 的一部分。它是一套独立链路：
 
 ```text
 Isa 的 Mac
@@ -10,47 +10,46 @@ Isa 的 Mac
       |
       | ssh
       v
-小克的 VPS
-  push_caption.py 接收 JSON
+我们的 VPS
+  gaze_push_caption.py 接收 JSON
       |
       v
-  gaze_realtime.json 里的 _realtime:* keys
+  /home/linuxuser/search_tool/gaze_realtime.json
       |
       v
-  memory MCP 暴露 read_realtime / mark_realtime_read
+独立 gaze MCP
+  https://migratorybird.xyz/mcp/gaze/
       |
       v
-小克按需读取
+小克按需调用 read_realtime
 ```
 
-我们的实际目标服务器：
+memory MCP 只管记忆/日记/图谱；gaze MCP 只管临时读屏缓存。
+
+## 当前部署状态
 
 ```text
 SSH: linuxuser@45.76.219.241
 服务目录: /home/linuxuser/search_tool
-MCP 服务: /home/linuxuser/search_tool/memory_server.py
 实时 store: /home/linuxuser/search_tool/gaze_realtime.json
+gaze MCP 脚本: /home/linuxuser/search_tool/gaze_mcp_server.py
+gaze MCP 本机端口: 127.0.0.1:8772
+gaze MCP 公网 URL: https://migratorybird.xyz/mcp/gaze/
+进程管理: pm2 gaze-mcp
+token env: /home/linuxuser/search_tool/.env 里的 GAZE_MCP_TOKEN
+本地私密连接文件: .gaze_mcp_connection.txt
 ```
-
-所以要做的是三件事：
-
-1. 把 `push_caption.py` 放到 VPS，负责接收 Mac 推过去的内容。
-2. 把 `cognition_gaze_patch.py` 放到 MCP 代码目录，给现有服务导入。
-3. 在现有 MCP 服务里注册 `read_realtime` 和 `mark_realtime_read` 两个工具。
 
 ## 安全边界
 
-- 先用 `/tmp/gaze-test-memories.json` 测试接收器，不碰真实记忆库。
-- 不把这段代码粘进身份、日记、记忆正文之类的文件。
-- 我们的 `memory_server.py` 用 JSONL 图谱记忆，不能把 `GAZE_STORE_PATH` 指向 `/home/linuxuser/.mcp/memory.jsonl`。
+- gaze 不写 `/home/linuxuser/.mcp/memory.jsonl`。
 - gaze 正式实时数据只写 `/home/linuxuser/search_tool/gaze_realtime.json`。
-- wakeup/surface 默认只放未读数、当前窗口、latest id；内容由小克调用 `read_realtime` 时再拉。
-- `push_caption.py` 默认只写 `_realtime:*` keys，并默认清理 6 小时以前的实时条目。
-- `.env` 留在本地，不能提交到 GitHub。
+- gaze MCP 使用独立 `GAZE_MCP_TOKEN`，不复用 memory MCP token。
+- `.gaze_mcp_connection.txt` 和 `.env` 都不提交到 GitHub。
+- 服务端旧条目默认 6 小时清理，保持临时缓存属性。
+- memory MCP 工具列表里不应该出现 `read_realtime` 或 `mark_realtime_read`。
 
 ## 0. 本地准备
-
-在 Mac 端确认工具包和安全检查都正常：
 
 ```bash
 cd "/Users/Isa/Projects/gaze-xiaoke-tool"
@@ -58,161 +57,134 @@ cd "/Users/Isa/Projects/gaze-xiaoke-tool"
 ./safe_check.sh
 ```
 
-下面命令使用我们的实际 MCP 服务器：
+## 1. 上传服务端文件
 
 ```bash
 export GAZE_REMOTE_HOST=linuxuser@45.76.219.241
 export GAZE_REMOTE_DIR=/home/linuxuser/search_tool
-export GAZE_TEST_STORE=/tmp/gaze-test-memories.json
-export GAZE_REALTIME_STORE=/home/linuxuser/search_tool/gaze_realtime.json
-```
 
-## 1. 上传接收器和 helper
-
-```bash
-cd "/Users/Isa/Projects/gaze-xiaoke-tool"
 scp push_caption.py "$GAZE_REMOTE_HOST:$GAZE_REMOTE_DIR/gaze_push_caption.py"
 scp cognition_gaze_patch.py "$GAZE_REMOTE_HOST:$GAZE_REMOTE_DIR/gaze_realtime_tools.py"
+scp gaze_mcp_server.py "$GAZE_REMOTE_HOST:$GAZE_REMOTE_DIR/gaze_mcp_server.py"
 ssh "$GAZE_REMOTE_HOST" "chmod +x $GAZE_REMOTE_DIR/gaze_push_caption.py"
 ```
 
-## 2. 先测临时 store
+## 2. 配置独立 token 和 store
 
-这一步只写 `/tmp/gaze-test-memories.json`：
-
-```bash
-printf '%s\n' '{"caption":"hello gaze from deploy test","window":"deploy-test","source":"manual"}' \
-  | ssh "$GAZE_REMOTE_HOST" "GAZE_STORE_PATH=$GAZE_TEST_STORE python3 $GAZE_REMOTE_DIR/gaze_push_caption.py"
-
-ssh "$GAZE_REMOTE_HOST" "python3 -m json.tool $GAZE_TEST_STORE | sed -n '1,120p'"
-```
-
-期望看到类似：
-
-```text
-OK count=1 ids=... timeline=1 window=deploy-test
-```
-
-并且 JSON 里出现 `_realtime:screen_caption`、`_realtime:window:deploy-test`、`_realtime:current_window`。
-
-## 3. 接入小克 MCP 服务
-
-我们的 `/home/linuxuser/search_tool/memory_server.py` 是手写 `@app.list_tools()` / `@app.call_tool()` 的 MCP server。需要：
-
-- import `mark_realtime_read_impl` 和 `read_realtime_impl`
-- 增加 `GAZE_REALTIME_PATH`
-- 增加 `load_realtime_store()` / `save_realtime_store()`
-- 在 `list_tools()` 里追加 `read_realtime` 和 `mark_realtime_read`
-- 在 `call_tool()` 里处理这两个名字
-
-如果未来迁移到装饰器风格 cognition 服务，可以用这个通用写法：
-
-```python
-from gaze_realtime_tools import (
-    mark_realtime_read_impl,
-    read_realtime_impl,
-    realtime_surface,
-)
-```
-
-在构造 wakeup/surface 的地方，加载 `all_data` 后加入：
-
-```python
-surface.update(realtime_surface(all_data, include_entries=False))
-```
-
-这里的 `include_entries=False` 很重要：它只把“有多少未读、当前窗口是什么、最新 id 是多少”放进 surface，不直接把屏幕内容塞进上下文。
-
-然后在同一个 MCP server 里注册两个工具：
-
-```python
-@mcp.tool()
-def read_realtime(
-    window_name="@current",
-    since_id=None,
-    limit=10,
-    unread_only=True,
-    mark_read=False,
-):
-    return read_realtime_impl(
-        _load_all,
-        _save_all,
-        window_name,
-        since_id,
-        limit,
-        unread_only,
-        mark_read,
-    )
-
-
-@mcp.tool()
-def mark_realtime_read(up_to_id=None, window_name=None):
-    return mark_realtime_read_impl(_load_all, _save_all, up_to_id, window_name)
-```
-
-`_load_all` 和 `_save_all` 是占位名，要替换成小克 MCP 服务里真实的读写函数名。它们需要满足：
-
-```python
-def load_all() -> dict: ...
-def save_all(data: dict) -> None: ...
-```
-
-## 4. 重启 MCP 服务
-
-我们的 `memory_server.py` 当前不在 pm2 里。重启前先查精确进程：
+不要把 token 打印到聊天或提交到仓库。服务器 `.env` 至少需要：
 
 ```bash
-ssh "$GAZE_REMOTE_HOST" "pgrep -af '/home/linuxuser/search_tool/memory_server.py'"
+GAZE_REALTIME_PATH=/home/linuxuser/search_tool/gaze_realtime.json
+GAZE_MCP_PORT=8772
+GAZE_MCP_TOKEN=<server-side-secret>
 ```
 
-当前重启方式：
+## 3. 启动独立 gaze MCP
 
 ```bash
 ssh "$GAZE_REMOTE_HOST" '
-old=$(pgrep -u linuxuser -f "^/usr/bin/python3 /home/linuxuser/search_tool/memory_server.py$|^python3 /home/linuxuser/search_tool/memory_server.py$")
-if [ -n "$old" ]; then kill -TERM $old; fi
-sleep 2
-mkdir -p /home/linuxuser/search_tool/logs
 cd /home/linuxuser/search_tool
-nohup python3 /home/linuxuser/search_tool/memory_server.py >> /home/linuxuser/search_tool/logs/memory_server.log 2>&1 &
+python3 -m py_compile gaze_mcp_server.py gaze_realtime_tools.py gaze_push_caption.py
+pm2 delete gaze-mcp >/dev/null 2>&1 || true
+pm2 start /home/linuxuser/search_tool/gaze_mcp_server.py --interpreter python3 --name gaze-mcp
+pm2 save
+pm2 status gaze-mcp
 '
 ```
 
-重启后，在小克可用的 MCP 工具列表里应该能看到：
-
-- `read_realtime`
-- `mark_realtime_read`
-
-## 5. 正式验收一条 harmless payload
-
-前面临时 store 成功、MCP 服务也能启动后，再写一条很短的真实 `_realtime:*` 测试数据：
+本机健康检查：
 
 ```bash
-printf '%s\n' '{"caption":"gaze production smoke test","window":"deploy-test","source":"manual"}' \
-  | ssh "$GAZE_REMOTE_HOST" "GAZE_STORE_PATH=$GAZE_REALTIME_STORE python3 $GAZE_REMOTE_DIR/gaze_push_caption.py"
+ssh "$GAZE_REMOTE_HOST" "curl -sS http://127.0.0.1:8772/health"
 ```
 
-然后让小克调用：
+## 4. 配置 nginx 路径
+
+公网路径：
 
 ```text
-read_realtime(window_name=None, limit=5, unread_only=False)
+https://migratorybird.xyz/mcp/gaze/
 ```
 
-如果能读到 `gaze production smoke test`，说明链路通了。
+nginx location：
 
-读完后可以调用：
+```nginx
+location /mcp/gaze/ {
+        proxy_pass http://127.0.0.1:8772/mcp/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 120s;
+        chunked_transfer_encoding on;
+}
+```
+
+每次修改 nginx 后：
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+备份不要放在 `/etc/nginx/sites-enabled/`，否则 nginx 会把备份也当配置加载。放到 `/etc/nginx/backups/`。
+
+## 5. 验证公网 MCP
+
+无 token 应该是 401：
+
+```bash
+curl -s -o /tmp/gaze-public-no-token.txt -w "%{http_code}\n" \
+  https://migratorybird.xyz/mcp/gaze/
+```
+
+带 token 的 initialize 应该返回 `serverInfo.name = "xike-gaze"`。
+
+```bash
+TOKEN=$(ssh "$GAZE_REMOTE_HOST" 'python3 - <<'"'"'PY'"'"'
+from dotenv import dotenv_values
+print(dotenv_values("/home/linuxuser/search_tool/.env").get("GAZE_MCP_TOKEN", ""))
+PY
+')
+
+curl -sS \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
+  "https://migratorybird.xyz/mcp/gaze/?token=$TOKEN"
+```
+
+## 6. 确认 memory MCP 已隔离
+
+memory MCP 工具列表不应包含 realtime：
+
+```bash
+ssh "$GAZE_REMOTE_HOST" 'cd /home/linuxuser/search_tool && python3 - <<'"'"'PY'"'"'
+import asyncio
+import memory_server
+
+tools = asyncio.run(memory_server.list_tools())
+names = [tool.name for tool in tools]
+print(any("realtime" in name for name in names))
+print(names)
+PY'
+```
+
+期望第一行是：
 
 ```text
-mark_realtime_read()
+False
 ```
 
-## 6. Mac 本地端开始推送
+## 7. Mac 本地端开始推送
 
-确认 `.env` 里有：
+`.env` 里应有：
 
 ```bash
 GAZE_SSH_HOST=linuxuser@45.76.219.241
 GAZE_REMOTE_COMMAND=GAZE_STORE_PATH=/home/linuxuser/search_tool/gaze_realtime.json GAZE_TTL_SECONDS=21600 python3 /home/linuxuser/search_tool/gaze_push_caption.py
+GAZE_MCP_URL=https://migratorybird.xyz/mcp/gaze/
 ```
 
 先干跑：
@@ -233,25 +205,34 @@ python gaze_local.py --once --follow-active-window --auto-mask --mask-preset mac
 python gaze_launcher.py
 ```
 
-如果当前 Python 没有 Tkinter，它会自动打开本地网页启动器。
-
 ## 常见问题
 
-### 需要改本地 MCP 配置吗？
+### 小克该填哪个 URL？
 
-通常不需要。这个工具接的是小克已经在用的 memory MCP 服务。只有在小克那边还没有登记这个 MCP server 时，才需要改客户端的 MCP 配置。
+填：
+
+```text
+https://migratorybird.xyz/mcp/gaze/
+```
+
+token 在 `.gaze_mcp_connection.txt` 里；如果客户端不能单独填 Bearer token，就用文件里的 `URL with token`。
 
 ### 小克会自动看到所有屏幕内容吗？
 
-不会。默认 surface 只给未读数和最新 id。小克需要主动调用 `read_realtime` 才会读内容。
+不会。gaze MCP 只提供工具。小克需要主动调用 `read_realtime` 才会读内容。
 
 ### 怎么停掉？
 
-停 Mac 端进程就不会继续上传。服务端旧条目默认 6 小时后清掉。要彻底撤掉，就从 MCP 服务里移除两个工具和 import，重启服务。
+```bash
+ssh linuxuser@45.76.219.241 'pm2 stop gaze-mcp'
+```
+
+Mac 端停止 `gaze_local.py` 或启动器后，就不会继续上传。
 
 ### 出问题怎么回滚？
 
-1. 停掉 Mac 端 `gaze_local.py` 或启动器。
-2. 从 MCP 服务代码里删除 `gaze_realtime_tools` import、gaze realtime store 函数、两个工具声明和两个 handler。
-3. 重启 MCP 服务。
-4. 如需清理测试数据，先备份 store，再只删除 `_realtime:*` keys。
+1. 停 Mac 端 `gaze_local.py` 或启动器。
+2. `pm2 stop gaze-mcp`。
+3. 从 nginx 移除 `/mcp/gaze/` location。
+4. `sudo nginx -t && sudo systemctl reload nginx`。
+5. 保持 memory MCP 不动；它已经不依赖 gaze。

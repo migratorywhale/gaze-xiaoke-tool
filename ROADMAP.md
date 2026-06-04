@@ -17,6 +17,8 @@
 - cognition helper for `realtime_surface()` and `mark_realtime_read_impl()`.
 - Per-window cursors via `_realtime:window_cursor:<window>`.
 - `read_realtime_impl()` helper for pull-on-demand screen context.
+- Standalone `gaze_mcp_server.py` with dedicated token, URL, and pm2 process.
+- Split gaze tools back out of Xiaoke's memory MCP after verifying the standalone endpoint.
 - One-command `safe_check.sh`.
 - Private GitHub repo with `.env` and `.venv` ignored.
 

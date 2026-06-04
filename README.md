@@ -1,12 +1,12 @@
 # gaze-xiaoke-tool
 
-这是把 `gaze_开源分享版.md` 整理成“小克可接入”的本地工具包：Mac 端采集屏幕文字/画面描述，Linux/VPS 端接收后写入专用 `gaze_realtime.json` 里的 `_realtime:*` keys，再由小克 memory MCP 的 `read_realtime` 工具按需读取。
+这是把 `gaze_开源分享版.md` 整理成“小克可接入”的本地工具包：Mac 端采集屏幕文字/画面描述，Linux/VPS 端接收后写入专用 `gaze_realtime.json` 里的 `_realtime:*` keys，再由独立的 gaze MCP 按需读取。
 
-我做成了保守版：默认可以 `--dry-run` 测试，不会直接上传屏幕内容；服务端集成也先给 helper 文件，不直接改小克的记忆库或生产服务。
+我做成了保守版：默认可以 `--dry-run` 测试，不会直接上传屏幕内容；服务端的 gaze MCP 和 memory MCP 已经隔离，gaze 不写入长期记忆图谱。
 
 ## 老板一句话版
 
-先只跑 `--dry-run`，确认安全后再填 `.env` 上传。真正接小克服务端前，先读 `SECURITY.md` 和 `ROADMAP.md`。
+先只跑 `--dry-run`，确认安全后再上传。小克读取 gaze 用独立 URL：`https://migratorybird.xyz/mcp/gaze/`。
 
 ## 文件
 
@@ -15,7 +15,8 @@
 - `gaze_launcher.py`：本地 Tkinter 小启动器，用按钮组合常用参数。
 - `push_caption.py`：VPS 端 stdin 接收器，修复原分享版 JSON 读取 bug，并加了锁、长度限制、窗口名清洗。
 - `cognition_gaze_patch.py`：通用 realtime helper：`realtime_surface()`、`read_realtime_impl()` 和 `mark_realtime_read_impl()`。
-- `DEPLOY_XIAOKE.md`：给小克接入 memory MCP 的部署工单。
+- `gaze_mcp_server.py`：独立 gaze MCP server，只暴露 `read_realtime` 和 `mark_realtime_read`。
+- `DEPLOY_XIAOKE.md`：给小克接入独立 gaze MCP 的部署工单。
 - `requirements-macos.txt`：Mac 端依赖。
 - `.env.example`：环境变量模板。
 - `SECURITY.md`：隐私/密钥/生产接入边界。
@@ -35,6 +36,7 @@ GLM_API_KEY=你的智谱key
 GAZE_SSH_HOST=linuxuser@45.76.219.241
 GAZE_REMOTE_COMMAND=GAZE_STORE_PATH=/home/linuxuser/search_tool/gaze_realtime.json GAZE_TTL_SECONDS=21600 python3 /home/linuxuser/search_tool/gaze_push_caption.py
 GAZE_BOOKMARK_KEYWORDS=你书签栏里不想被OCR推送的词
+GAZE_MCP_URL=https://migratorybird.xyz/mcp/gaze/
 ```
 
 ## 本地安全测试
@@ -138,7 +140,7 @@ scp cognition_gaze_patch.py linuxuser@45.76.219.241:/home/linuxuser/search_tool/
 ssh linuxuser@45.76.219.241 'chmod +x /home/linuxuser/search_tool/gaze_push_caption.py'
 ```
 
-我们的 `memory_server.py` 使用 JSONL 图谱记忆，所以 gaze 实时数据必须放在单独 JSON 文件里，不能写进 `/home/linuxuser/.mcp/memory.jsonl`。先用临时 store 测试：
+我们的 memory MCP 使用 JSONL 图谱记忆，所以 gaze 实时数据必须放在单独 JSON 文件里，不能写进 `/home/linuxuser/.mcp/memory.jsonl`。先用临时 store 测试：
 
 ```bash
 echo '{"caption":"hello gaze","window":"test","source":"manual"}' \
@@ -147,38 +149,27 @@ echo '{"caption":"hello gaze","window":"test","source":"manual"}' \
 
 确认无误后，再让本地端使用 `GAZE_STORE_PATH=/home/linuxuser/search_tool/gaze_realtime.json` 写正式实时 store。
 
-## MCP 集成
+## 独立 MCP 集成
 
-不要直接粘进身份/记忆文件。我们自己的 `/home/linuxuser/search_tool/memory_server.py` 是手写 `@app.list_tools()` / `@app.call_tool()` 的 MCP server，不是装饰器风格；已部署版本通过 `gaze_realtime_tools.py` 暴露：
+不要直接粘进身份/记忆文件，也不要把 gaze 工具挂进 memory MCP。已部署版本是独立服务：
+
+```text
+public URL: https://migratorybird.xyz/mcp/gaze/
+local port: 127.0.0.1:8772
+process: pm2 gaze-mcp
+store: /home/linuxuser/search_tool/gaze_realtime.json
+```
+
+它只暴露：
 
 - `read_realtime`
 - `mark_realtime_read`
-
-如果未来迁移到装饰器风格服务，推荐只在服务端代码里导入 helper：
-
-```python
-from cognition_gaze_patch import realtime_surface, read_realtime_impl, mark_realtime_read_impl
-
-# wakeup/surface 构造时：
-# 安静模式：只 surface 当前窗口、未读数、latest id，不直接塞屏幕内容。
-surface.update(realtime_surface(all_data, include_entries=False))
-
-@mcp.tool()
-def read_realtime(window_name="@current", since_id=None, limit=10, unread_only=True, mark_read=False):
-    return read_realtime_impl(_load_all, _save_all, window_name, since_id, limit, unread_only, mark_read)
-
-@mcp.tool()
-def mark_realtime_read(up_to_id=None, window_name=None):
-    return mark_realtime_read_impl(_load_all, _save_all, up_to_id, window_name)
-```
-
-修改服务端后重启对应进程。我们当前这台服务器的 `memory_server.py` 不在 pm2 里，重启方式是停止旧的 `python3 /home/linuxuser/search_tool/memory_server.py` 后用 `nohup` 拉起。
 
 `read_realtime(window_name="@current")` 会读取当前窗口；`window_name=None` 会读取全局时间线。`mark_read=True` 时，会在读取后推进对应 cursor。
 
 `window_name` 不传时，保持旧行为：推进全局 `_realtime:screen_cursor`。传窗口名时，只推进 `_realtime:window_cursor:<window>`，适合小克只看完当前窗口、不想把其他窗口标成已读。
 
-`gaze_push_caption.py` 默认清理 6 小时以前的 `_realtime:*` 条目；可以在 VPS 环境里设 `GAZE_TTL_SECONDS=0` 关闭。
+`gaze_push_caption.py` 默认清理 6 小时以前的 `_realtime:*` 条目；可以在 VPS 环境里设 `GAZE_TTL_SECONDS=0` 关闭。完整连接信息含 token 保存在本地私密文件 `.gaze_mcp_connection.txt`，不会提交到 GitHub。
 
 ## 我建议继续优化的地方
 

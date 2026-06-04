@@ -14,7 +14,7 @@ TTL_STORE="${TMPDIR:-/tmp}/gaze-safe-check-ttl-$$.json"
 trap 'rm -f "$TMP_STORE" "$TTL_STORE"' EXIT
 
 echo "== syntax =="
-"$PY" -m py_compile gaze_local.py gaze_launcher.py gaze_web_launcher.py push_caption.py cognition_gaze_patch.py
+"$PY" -m py_compile gaze_local.py gaze_launcher.py gaze_web_launcher.py gaze_mcp_server.py push_caption.py cognition_gaze_patch.py
 
 echo "== local helpers =="
 "$PY" - <<'PY'
