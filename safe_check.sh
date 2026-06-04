@@ -14,7 +14,7 @@ TTL_STORE="${TMPDIR:-/tmp}/gaze-safe-check-ttl-$$.json"
 trap 'rm -f "$TMP_STORE" "$TTL_STORE"' EXIT
 
 echo "== syntax =="
-"$PY" -m py_compile gaze_local.py gaze_launcher.py push_caption.py cognition_gaze_patch.py
+"$PY" -m py_compile gaze_local.py gaze_launcher.py gaze_web_launcher.py push_caption.py cognition_gaze_patch.py
 
 echo "== local helpers =="
 "$PY" - <<'PY'
@@ -87,6 +87,7 @@ PY
 echo "== launcher command builder =="
 "$PY" - <<'PY'
 from gaze_launcher import LauncherConfig, build_command, command_string
+from gaze_web_launcher import config_from_form
 
 cmd = build_command(LauncherConfig())
 text = command_string(cmd)
@@ -114,6 +115,17 @@ assert "--auto-mask" not in cmd
 assert "--mask-preset" in cmd and "browser-top" in cmd
 assert "--caption-provider" in cmd and "glm" in cmd
 assert "--once" in cmd and "--verbose" in cmd
+
+config = config_from_form({
+    "target_mode": ["region"],
+    "region": ["0,0,640,480"],
+    "dry_run": ["on"],
+    "mask_presets": ["mac-safe"],
+    "caption_provider": ["none"],
+})
+cmd = build_command(config)
+assert "--region" in cmd and "0,0,640,480" in cmd
+assert "--dry-run" in cmd
 PY
 
 echo "== cognition helper =="

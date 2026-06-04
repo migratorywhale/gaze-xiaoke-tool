@@ -11,7 +11,7 @@
 - App-aware auto masking for common browser windows.
 - Vision image-diff throttling for unchanged frames.
 - Foreground macOS window tracking with `--follow-active-window`.
-- Tkinter launcher for composing and running local gaze commands.
+- Tkinter/browser launchers for composing and running local gaze commands.
 - VPS-side `push_caption.py` with file locking, sanitized window names, bounded timeline size, and fixed JSON read/write handling.
 - TTL cleanup for stale `_realtime:*` entries.
 - cognition helper for `realtime_surface()` and `mark_realtime_read_impl()`.

@@ -1,4 +1,4 @@
-# gaze_xiaoke_tool
+# gaze-xiaoke-tool
 
 这是把 `gaze_开源分享版.md` 整理成“小克可接入”的本地工具包：Mac 端采集屏幕文字/画面描述，Linux/VPS 端接收后写入 `_realtime:*` keys，再由 cognition/wakeup surface 给小克看。
 
@@ -23,7 +23,7 @@
 ## 安装 Mac 本地端
 
 ```bash
-cd gaze_xiaoke_tool
+cd "/Users/Isa/Projects/gaze-xiaoke-tool"
 bash install_macos.sh
 ```
 
@@ -52,10 +52,16 @@ GAZE_TTL_SECONDS=21600
 python gaze_launcher.py
 ```
 
+如果当前 Python 没有 Tkinter，`gaze_launcher.py` 会自动打开本地网页启动器。也可以直接运行：
+
+```bash
+python gaze_launcher.py --web
+```
+
 只测截屏和 OCR，不发到 VPS：
 
 ```bash
-cd gaze_xiaoke_tool
+cd "/Users/Isa/Projects/gaze-xiaoke-tool"
 . .venv/bin/activate
 python gaze_local.py --once --dry-run --caption-provider none
 ```

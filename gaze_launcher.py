@@ -87,10 +87,19 @@ def command_string(cmd: Iterable[str]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Tkinter launcher for gaze_local.py")
     parser.add_argument("--print-default-command", action="store_true")
+    parser.add_argument("--web", action="store_true", help="Use the browser launcher instead of Tkinter.")
+    parser.add_argument("--port", type=int, default=8765, help="Port for --web or Tkinter fallback web launcher.")
+    parser.add_argument("--no-browser", action="store_true", help="Do not open the browser for --web.")
     args = parser.parse_args()
 
     if args.print_default_command:
         print(command_string(build_command(LauncherConfig())))
+        return 0
+
+    if args.web:
+        from gaze_web_launcher import launch_web
+
+        launch_web(args.port, open_browser=not args.no_browser)
         return 0
 
     launch_gui()
@@ -98,8 +107,17 @@ def main() -> int:
 
 
 def launch_gui() -> None:
-    import tkinter as tk
-    from tkinter import messagebox, ttk
+    try:
+        import tkinter as tk
+        from tkinter import messagebox, ttk
+    except ModuleNotFoundError as exc:
+        if exc.name != "_tkinter":
+            raise
+        from gaze_web_launcher import launch_web
+
+        print("Tkinter is not available in this Python; opening the browser launcher instead.")
+        launch_web()
+        return
 
     root = tk.Tk()
     root.title("gaze launcher")
