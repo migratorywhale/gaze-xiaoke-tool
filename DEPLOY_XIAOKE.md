@@ -2,7 +2,7 @@
 
 ## 先讲人话
 
-这个工具不是一个新的独立 MCP server。它更像给小克现有的 cognition/nowhere MCP 服务加一只“实时读屏抽屉”：
+这个工具不是一个新的独立 MCP server。它更像给小克现有的 memory MCP 服务加一只“实时读屏抽屉”：
 
 ```text
 Isa 的 Mac
@@ -14,25 +14,36 @@ Isa 的 Mac
   push_caption.py 接收 JSON
       |
       v
-  memories.json 里的 _realtime:* keys
+  gaze_realtime.json 里的 _realtime:* keys
       |
       v
-  cognition MCP 暴露 read_realtime / mark_realtime_read
+  memory MCP 暴露 read_realtime / mark_realtime_read
       |
       v
 小克按需读取
 ```
 
+我们的实际目标服务器：
+
+```text
+SSH: linuxuser@45.76.219.241
+服务目录: /home/linuxuser/search_tool
+MCP 服务: /home/linuxuser/search_tool/memory_server.py
+实时 store: /home/linuxuser/search_tool/gaze_realtime.json
+```
+
 所以要做的是三件事：
 
 1. 把 `push_caption.py` 放到 VPS，负责接收 Mac 推过去的内容。
-2. 把 `cognition_gaze_patch.py` 放到 cognition MCP 代码目录，给现有服务导入。
+2. 把 `cognition_gaze_patch.py` 放到 MCP 代码目录，给现有服务导入。
 3. 在现有 MCP 服务里注册 `read_realtime` 和 `mark_realtime_read` 两个工具。
 
 ## 安全边界
 
 - 先用 `/tmp/gaze-test-memories.json` 测试接收器，不碰真实记忆库。
 - 不把这段代码粘进身份、日记、记忆正文之类的文件。
+- 我们的 `memory_server.py` 用 JSONL 图谱记忆，不能把 `GAZE_STORE_PATH` 指向 `/home/linuxuser/.mcp/memory.jsonl`。
+- gaze 正式实时数据只写 `/home/linuxuser/search_tool/gaze_realtime.json`。
 - wakeup/surface 默认只放未读数、当前窗口、latest id；内容由小克调用 `read_realtime` 时再拉。
 - `push_caption.py` 默认只写 `_realtime:*` keys，并默认清理 6 小时以前的实时条目。
 - `.env` 留在本地，不能提交到 GitHub。
@@ -47,20 +58,22 @@ cd "/Users/Isa/Projects/gaze-xiaoke-tool"
 ./safe_check.sh
 ```
 
-下面命令假设小克 VPS 的 SSH alias 是 `migratorybird`，服务目录是 `/root/mcp-memory-server`。如果实际目录不同，只改这两个变量：
+下面命令使用我们的实际 MCP 服务器：
 
 ```bash
-export GAZE_REMOTE_HOST=migratorybird
-export GAZE_REMOTE_DIR=/root/mcp-memory-server
+export GAZE_REMOTE_HOST=linuxuser@45.76.219.241
+export GAZE_REMOTE_DIR=/home/linuxuser/search_tool
 export GAZE_TEST_STORE=/tmp/gaze-test-memories.json
+export GAZE_REALTIME_STORE=/home/linuxuser/search_tool/gaze_realtime.json
 ```
 
 ## 1. 上传接收器和 helper
 
 ```bash
 cd "/Users/Isa/Projects/gaze-xiaoke-tool"
-scp push_caption.py cognition_gaze_patch.py "$GAZE_REMOTE_HOST:$GAZE_REMOTE_DIR/"
-ssh "$GAZE_REMOTE_HOST" "chmod +x $GAZE_REMOTE_DIR/push_caption.py"
+scp push_caption.py "$GAZE_REMOTE_HOST:$GAZE_REMOTE_DIR/gaze_push_caption.py"
+scp cognition_gaze_patch.py "$GAZE_REMOTE_HOST:$GAZE_REMOTE_DIR/gaze_realtime_tools.py"
+ssh "$GAZE_REMOTE_HOST" "chmod +x $GAZE_REMOTE_DIR/gaze_push_caption.py"
 ```
 
 ## 2. 先测临时 store
@@ -69,7 +82,7 @@ ssh "$GAZE_REMOTE_HOST" "chmod +x $GAZE_REMOTE_DIR/push_caption.py"
 
 ```bash
 printf '%s\n' '{"caption":"hello gaze from deploy test","window":"deploy-test","source":"manual"}' \
-  | ssh "$GAZE_REMOTE_HOST" "GAZE_STORE_PATH=$GAZE_TEST_STORE python3 $GAZE_REMOTE_DIR/push_caption.py"
+  | ssh "$GAZE_REMOTE_HOST" "GAZE_STORE_PATH=$GAZE_TEST_STORE python3 $GAZE_REMOTE_DIR/gaze_push_caption.py"
 
 ssh "$GAZE_REMOTE_HOST" "python3 -m json.tool $GAZE_TEST_STORE | sed -n '1,120p'"
 ```
@@ -82,12 +95,20 @@ OK count=1 ids=... timeline=1 window=deploy-test
 
 并且 JSON 里出现 `_realtime:screen_caption`、`_realtime:window:deploy-test`、`_realtime:current_window`。
 
-## 3. 接入 cognition MCP 服务
+## 3. 接入小克 MCP 服务
 
-在小克现有的 cognition MCP 服务代码里加导入：
+我们的 `/home/linuxuser/search_tool/memory_server.py` 是手写 `@app.list_tools()` / `@app.call_tool()` 的 MCP server。需要：
+
+- import `mark_realtime_read_impl` 和 `read_realtime_impl`
+- 增加 `GAZE_REALTIME_PATH`
+- 增加 `load_realtime_store()` / `save_realtime_store()`
+- 在 `list_tools()` 里追加 `read_realtime` 和 `mark_realtime_read`
+- 在 `call_tool()` 里处理这两个名字
+
+如果未来迁移到装饰器风格 cognition 服务，可以用这个通用写法：
 
 ```python
-from cognition_gaze_patch import (
+from gaze_realtime_tools import (
     mark_realtime_read_impl,
     read_realtime_impl,
     realtime_surface,
@@ -138,23 +159,23 @@ def save_all(data: dict) -> None: ...
 
 ## 4. 重启 MCP 服务
 
-先看真实进程名，不要猜：
+我们的 `memory_server.py` 当前不在 pm2 里。重启前先查精确进程：
 
 ```bash
-ssh "$GAZE_REMOTE_HOST" "pm2 status"
+ssh "$GAZE_REMOTE_HOST" "pgrep -af '/home/linuxuser/search_tool/memory_server.py'"
 ```
 
-如果服务确实由 pm2 管理：
+当前重启方式：
 
 ```bash
-ssh "$GAZE_REMOTE_HOST" "pm2 restart <实际进程名>"
-```
-
-如果是 systemd，就用实际 unit 名：
-
-```bash
-ssh "$GAZE_REMOTE_HOST" "systemctl status <实际服务名>"
-ssh "$GAZE_REMOTE_HOST" "sudo systemctl restart <实际服务名>"
+ssh "$GAZE_REMOTE_HOST" '
+old=$(pgrep -u linuxuser -f "^/usr/bin/python3 /home/linuxuser/search_tool/memory_server.py$|^python3 /home/linuxuser/search_tool/memory_server.py$")
+if [ -n "$old" ]; then kill -TERM $old; fi
+sleep 2
+mkdir -p /home/linuxuser/search_tool/logs
+cd /home/linuxuser/search_tool
+nohup python3 /home/linuxuser/search_tool/memory_server.py >> /home/linuxuser/search_tool/logs/memory_server.log 2>&1 &
+'
 ```
 
 重启后，在小克可用的 MCP 工具列表里应该能看到：
@@ -168,7 +189,7 @@ ssh "$GAZE_REMOTE_HOST" "sudo systemctl restart <实际服务名>"
 
 ```bash
 printf '%s\n' '{"caption":"gaze production smoke test","window":"deploy-test","source":"manual"}' \
-  | ssh "$GAZE_REMOTE_HOST" "python3 $GAZE_REMOTE_DIR/push_caption.py"
+  | ssh "$GAZE_REMOTE_HOST" "GAZE_STORE_PATH=$GAZE_REALTIME_STORE python3 $GAZE_REMOTE_DIR/gaze_push_caption.py"
 ```
 
 然后让小克调用：
@@ -190,9 +211,8 @@ mark_realtime_read()
 确认 `.env` 里有：
 
 ```bash
-GAZE_SSH_HOST=migratorybird
-GAZE_REMOTE_COMMAND=python3 /root/mcp-memory-server/push_caption.py
-GAZE_TTL_SECONDS=21600
+GAZE_SSH_HOST=linuxuser@45.76.219.241
+GAZE_REMOTE_COMMAND=GAZE_STORE_PATH=/home/linuxuser/search_tool/gaze_realtime.json GAZE_TTL_SECONDS=21600 python3 /home/linuxuser/search_tool/gaze_push_caption.py
 ```
 
 先干跑：
@@ -219,7 +239,7 @@ python gaze_launcher.py
 
 ### 需要改本地 MCP 配置吗？
 
-通常不需要。这个工具接的是小克已经在用的 cognition MCP 服务。只有在小克那边还没有登记 cognition MCP server 时，才需要改客户端的 MCP 配置。
+通常不需要。这个工具接的是小克已经在用的 memory MCP 服务。只有在小克那边还没有登记这个 MCP server 时，才需要改客户端的 MCP 配置。
 
 ### 小克会自动看到所有屏幕内容吗？
 
@@ -232,6 +252,6 @@ python gaze_launcher.py
 ### 出问题怎么回滚？
 
 1. 停掉 Mac 端 `gaze_local.py` 或启动器。
-2. 从 MCP 服务代码里删除 `cognition_gaze_patch` import、surface 那一行、两个 `@mcp.tool()`。
+2. 从 MCP 服务代码里删除 `gaze_realtime_tools` import、gaze realtime store 函数、两个工具声明和两个 handler。
 3. 重启 MCP 服务。
 4. 如需清理测试数据，先备份 store，再只删除 `_realtime:*` keys。
