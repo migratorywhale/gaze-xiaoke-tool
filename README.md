@@ -41,6 +41,7 @@ bash install_macos.sh
 GLM_API_KEY=你的智谱key
 GEMINI_API_KEY=你的 Gemini key
 GEMINI_MODEL=gemini-3.5-flash
+GAZE_CAPTION_PROVIDER=gemini
 GAZE_SSH_HOST=linuxuser@45.76.219.241
 GAZE_REMOTE_COMMAND=GAZE_STORE_PATH=/home/linuxuser/search_tool/gaze_realtime.json GAZE_TTL_SECONDS=21600 python3 /home/linuxuser/search_tool/gaze_push_caption.py
 GAZE_BOOKMARK_KEYWORDS=你书签栏里不想被OCR推送的词
@@ -83,8 +84,8 @@ python gaze_local.py --once --dry-run --caption-provider none
 测 vision caption 但仍不上传：
 
 ```bash
-python gaze_local.py --once --dry-run --no-ocr --caption-provider glm
 python gaze_local.py --once --dry-run --no-ocr --caption-provider gemini
+python gaze_local.py --once --dry-run --no-ocr --caption-provider glm
 ```
 
 没配视觉 key 但想测流程：
@@ -96,13 +97,13 @@ python gaze_local.py --once --dry-run --no-ocr --caption-provider mock
 自定义 vision prompt：
 
 ```bash
-python gaze_local.py --caption-provider glm --prompt-file ./prompts/xiaoke-gaze.txt --dry-run
+python gaze_local.py --caption-provider gemini --prompt-file ./prompts/xiaoke-gaze.txt --dry-run
 ```
 
 持续运行并上传：
 
 ```bash
-python gaze_local.py --caption-provider glm
+python gaze_local.py --caption-provider gemini
 ```
 
 只截某个窗口。默认是窄门：找不到窗口就退出/跳过，不会退回全屏乱截桌面：

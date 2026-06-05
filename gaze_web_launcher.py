@@ -161,7 +161,7 @@ def config_from_form(form: dict[str, list[str]]) -> LauncherConfig:
         auto_mask=truthy(form, "auto_mask"),
         mask_presets=form.get("mask_presets", ["mac-safe"]),
         no_ocr=truthy(form, "no_ocr"),
-        caption_provider=single(form, "caption_provider", "none"),
+        caption_provider=single(form, "caption_provider", "gemini"),
         ocr_interval=single(form, "ocr_interval", "3"),
         caption_interval=single(form, "caption_interval", "10"),
         batch_interval=single(form, "batch_interval", "2"),
@@ -225,7 +225,7 @@ def render_page() -> str:
     <fieldset>
       <legend>Channels</legend>
       <label><input type="checkbox" name="no_ocr"> Disable OCR</label>
-      <label>Vision <select name="caption_provider"><option value="none" selected>none</option><option value="mock">mock</option><option value="glm">glm</option><option value="gemini">gemini</option></select></label>
+      <label>Vision <select name="caption_provider"><option value="gemini" selected>gemini</option><option value="none">none</option><option value="mock">mock</option><option value="glm">glm</option></select></label>
     </fieldset>
     <fieldset>
       <legend>Timing</legend>

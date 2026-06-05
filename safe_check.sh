@@ -100,7 +100,7 @@ class Args:
     prompt = None
     prompt_file = None
 
-assert "输出一句" in load_prompt(Args())
+assert "忠实总结" in load_prompt(Args())
 with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tmp:
     tmp.write("custom prompt")
     tmp_path = tmp.name
@@ -125,7 +125,7 @@ assert "gaze_local.py" in text
 assert "--follow-active-window" in cmd
 assert "--dry-run" in cmd
 assert "--auto-mask" in cmd
-assert "--caption-provider" in cmd and "none" in cmd
+assert "--caption-provider" in cmd and "gemini" in cmd
 
 cmd = build_command(
     LauncherConfig(
@@ -159,6 +159,7 @@ config = config_from_form({
 cmd = build_command(config)
 assert "--region" in cmd and "0,0,640,480" in cmd
 assert "--dry-run" in cmd
+assert "--caption-provider" in cmd and "none" in cmd
 PY
 
 echo "== cognition helper =="

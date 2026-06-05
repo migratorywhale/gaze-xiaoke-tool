@@ -22,15 +22,12 @@ from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageGrab
 
 
-DEFAULT_PROMPT = """看截图，像跟朋友吐槽一样发一条弹幕。
+DEFAULT_PROMPT = """看截图，忠实总结屏幕上的内容。
 要求：
-- 不评价身材、颜值、性别气质，不使用"美女""小姐姐"等凝视词
-- 如果有可读文字，优先概括文字内容
-- 描述用中性词，例如衣服颜色、窗口状态、画面动作
+- 如果有可读文字，完整传递文字内容，不要有遗漏
+- 描述用中性词，不带价值判断，例如衣服颜色、窗口状态、画面动作
 - 不输出账号、URL、token、邮箱、路径等隐私细节
-- 40字以内
-
-输出一句:"""
+"""
 
 DEFAULT_REMOTE_COMMAND = "python3 /root/mcp-memory-server/push_caption.py"
 PUSH_IDLE = {"empty", "waiting"}
@@ -854,6 +851,7 @@ def load_prompt(args: argparse.Namespace) -> str:
 
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
+    caption_provider = args.caption_provider or os.getenv("GAZE_CAPTION_PROVIDER", "gemini")
     try:
         fallback_target = capture_target(
             args.window,
@@ -885,7 +883,7 @@ def run(args: argparse.Namespace) -> int:
             print(f"[warn] {exc}", file=sys.stderr)
 
     captioner = None
-    if args.caption_provider == "glm":
+    if caption_provider == "glm":
         try:
             captioner = GLMCaptioner(
                 api_key=os.getenv("GLM_API_KEY"),
@@ -895,7 +893,7 @@ def run(args: argparse.Namespace) -> int:
             )
         except ValueError as exc:
             print(f"[warn] {exc}; vision captions disabled", file=sys.stderr)
-    elif args.caption_provider == "gemini":
+    elif caption_provider == "gemini":
         try:
             captioner = GeminiCaptioner(
                 api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
@@ -906,7 +904,7 @@ def run(args: argparse.Namespace) -> int:
             )
         except ValueError as exc:
             print(f"[warn] {exc}; vision captions disabled", file=sys.stderr)
-    elif args.caption_provider == "mock":
+    elif caption_provider == "mock":
         captioner = MockCaptioner()
 
     prev_texts: list[str] = []
@@ -1032,7 +1030,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Black out x,y,width,height before OCR/vision. Negative x/y count from right/bottom.",
     )
-    parser.add_argument("--caption-provider", choices=["glm", "gemini", "mock", "none"], default="glm")
+    parser.add_argument(
+        "--caption-provider",
+        choices=["glm", "gemini", "mock", "none"],
+        help="Vision provider. Defaults to GAZE_CAPTION_PROVIDER or gemini.",
+    )
     parser.add_argument("--glm-model", default="glm-4v-flash")
     parser.add_argument("--glm-endpoint", default="https://open.bigmodel.cn/api/paas/v4/chat/completions")
     parser.add_argument("--gemini-model")

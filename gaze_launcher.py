@@ -27,7 +27,7 @@ class LauncherConfig:
     auto_mask: bool = True
     mask_presets: list[str] = field(default_factory=lambda: ["mac-safe"])
     no_ocr: bool = False
-    caption_provider: str = "none"
+    caption_provider: str = "gemini"
     ocr_interval: str = "3"
     caption_interval: str = "10"
     batch_interval: str = "2"
@@ -146,7 +146,7 @@ class GazeLauncher:
         self.auto_mask = tk.BooleanVar(value=True)
         self.mask_vars = {name: tk.BooleanVar(value=name == "mac-safe") for name in MASK_PRESETS}
         self.no_ocr = tk.BooleanVar(value=False)
-        self.caption_provider = tk.StringVar(value="none")
+        self.caption_provider = tk.StringVar(value="gemini")
         self.ocr_interval = tk.StringVar(value="3")
         self.caption_interval = tk.StringVar(value="10")
         self.batch_interval = tk.StringVar(value="2")
