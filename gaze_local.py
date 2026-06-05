@@ -206,6 +206,56 @@ class GLMCaptioner:
         return str(text).strip().strip("\"'。.")
 
 
+class GeminiCaptioner:
+    def __init__(self, api_key: str | None, model: str, endpoint_base: str, prompt: str):
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is required for --caption-provider gemini")
+        self.api_key = api_key
+        self.model = model
+        self.endpoint_base = endpoint_base.rstrip("/")
+        self.prompt = prompt
+
+    def caption(self, image: Image.Image, recent_ocr: list[str] | None = None) -> str:
+        import httpx
+
+        image = shrink(image, max_side=1024)
+        buf = BytesIO()
+        image.convert("RGB").save(buf, format="JPEG", quality=85, optimize=True)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        prompt = prompt_with_ocr_context(self.prompt, recent_ocr)
+        url = f"{self.endpoint_base}/v1beta/models/{self.model}:generateContent"
+
+        response = httpx.post(
+            url,
+            json={
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "inline_data": {
+                                    "mime_type": "image/jpeg",
+                                    "data": b64,
+                                }
+                            },
+                            {"text": prompt},
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "maxOutputTokens": 180,
+                    "temperature": 0.4,
+                },
+            },
+            headers={
+                "x-goog-api-key": self.api_key,
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        return extract_gemini_text(response.json())
+
+
 class MockCaptioner:
     def caption(self, image: Image.Image, recent_ocr: list[str] | None = None) -> str:
         width, height = image.size
@@ -636,6 +686,19 @@ def prompt_with_ocr_context(prompt: str, recent_ocr: list[str] | None) -> str:
     )
 
 
+def extract_gemini_text(data: dict[str, Any]) -> str:
+    try:
+        parts = data["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected Gemini response: {data}") from exc
+
+    texts = [str(part.get("text", "")).strip() for part in parts if isinstance(part, dict)]
+    text = "\n".join(item for item in texts if item).strip()
+    if not text:
+        raise RuntimeError(f"Gemini response had no text: {data}")
+    return text.strip().strip("\"'。.")
+
+
 def make_entry(source: str, caption: str, target: CaptureTarget) -> dict[str, Any]:
     entry = {
         "source": source,
@@ -832,6 +895,17 @@ def run(args: argparse.Namespace) -> int:
             )
         except ValueError as exc:
             print(f"[warn] {exc}; vision captions disabled", file=sys.stderr)
+    elif args.caption_provider == "gemini":
+        try:
+            captioner = GeminiCaptioner(
+                api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"),
+                model=args.gemini_model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+                endpoint_base=args.gemini_endpoint_base
+                or os.getenv("GEMINI_ENDPOINT_BASE", "https://generativelanguage.googleapis.com"),
+                prompt=prompt,
+            )
+        except ValueError as exc:
+            print(f"[warn] {exc}; vision captions disabled", file=sys.stderr)
     elif args.caption_provider == "mock":
         captioner = MockCaptioner()
 
@@ -958,9 +1032,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Black out x,y,width,height before OCR/vision. Negative x/y count from right/bottom.",
     )
-    parser.add_argument("--caption-provider", choices=["glm", "mock", "none"], default="glm")
+    parser.add_argument("--caption-provider", choices=["glm", "gemini", "mock", "none"], default="glm")
     parser.add_argument("--glm-model", default="glm-4v-flash")
     parser.add_argument("--glm-endpoint", default="https://open.bigmodel.cn/api/paas/v4/chat/completions")
+    parser.add_argument("--gemini-model")
+    parser.add_argument(
+        "--gemini-endpoint-base",
+        help="Defaults to GEMINI_ENDPOINT_BASE or https://generativelanguage.googleapis.com.",
+    )
     parser.add_argument("--prompt", help="Inline vision prompt. Overrides GAZE_PROMPT and the built-in default.")
     parser.add_argument("--prompt-file", help="Read the vision prompt from a UTF-8 text file. Overrides --prompt.")
     parser.add_argument("--no-ocr", action="store_true")

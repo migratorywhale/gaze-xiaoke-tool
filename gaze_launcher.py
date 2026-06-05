@@ -189,7 +189,7 @@ class GazeLauncher:
         channels.grid(row=3, column=0, columnspan=4, sticky="ew", pady=8)
         ttk.Checkbutton(channels, text="Disable OCR", variable=self.no_ocr, command=self.refresh_command).grid(row=0, column=0, sticky="w")
         ttk.Label(channels, text="Vision").grid(row=0, column=1, sticky="e")
-        ttk.Combobox(channels, textvariable=self.caption_provider, values=("none", "mock", "glm"), width=8, state="readonly").grid(row=0, column=2, sticky="w", padx=8)
+        ttk.Combobox(channels, textvariable=self.caption_provider, values=("none", "mock", "glm", "gemini"), width=8, state="readonly").grid(row=0, column=2, sticky="w", padx=8)
 
         timing = ttk.LabelFrame(self.frame, text="Timing")
         timing.grid(row=4, column=0, columnspan=4, sticky="ew", pady=8)

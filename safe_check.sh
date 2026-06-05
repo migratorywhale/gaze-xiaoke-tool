@@ -33,6 +33,7 @@ from gaze_local import (
     frontmost_app_name,
     image_diff_score,
     image_signature,
+    extract_gemini_text,
     is_console_noise,
     is_target_blacklisted,
     load_prompt,
@@ -47,6 +48,7 @@ assert cleaned == "Visit keep text", cleaned
 assert clean_caption("python gaze_local.py --caption-provider glm", []) is None
 assert is_console_noise("Traceback (most recent call last)")
 assert prompt_with_ocr_context("describe", ["字幕A"]).startswith("OCR has already captured")
+assert extract_gemini_text({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]}) == "hello"
 
 img = Image.new("RGB", (200, 100), "white")
 masked = apply_masks(img, ["menu-bar"], ["0,80,200,20"])
@@ -143,6 +145,9 @@ assert "--auto-mask" not in cmd
 assert "--mask-preset" in cmd and "browser-top" in cmd
 assert "--caption-provider" in cmd and "glm" in cmd
 assert "--once" in cmd and "--verbose" in cmd
+
+cmd = build_command(LauncherConfig(caption_provider="gemini"), once=True)
+assert "--caption-provider" in cmd and "gemini" in cmd
 
 config = config_from_form({
     "target_mode": ["region"],

@@ -39,6 +39,8 @@ bash install_macos.sh
 
 ```bash
 GLM_API_KEY=你的智谱key
+GEMINI_API_KEY=你的 Gemini key
+GEMINI_MODEL=gemini-3.5-flash
 GAZE_SSH_HOST=linuxuser@45.76.219.241
 GAZE_REMOTE_COMMAND=GAZE_STORE_PATH=/home/linuxuser/search_tool/gaze_realtime.json GAZE_TTL_SECONDS=21600 python3 /home/linuxuser/search_tool/gaze_push_caption.py
 GAZE_BOOKMARK_KEYWORDS=你书签栏里不想被OCR推送的词
@@ -82,6 +84,7 @@ python gaze_local.py --once --dry-run --caption-provider none
 
 ```bash
 python gaze_local.py --once --dry-run --no-ocr --caption-provider glm
+python gaze_local.py --once --dry-run --no-ocr --caption-provider gemini
 ```
 
 没配视觉 key 但想测流程：
