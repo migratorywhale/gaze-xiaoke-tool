@@ -19,6 +19,8 @@ echo "== syntax =="
 echo "== local helpers =="
 "$PY" - <<'PY'
 from PIL import Image
+from pathlib import Path
+import tempfile
 
 from gaze_local import (
     CaptureTarget,
@@ -31,6 +33,10 @@ from gaze_local import (
     frontmost_app_name,
     image_diff_score,
     image_signature,
+    is_console_noise,
+    is_target_blacklisted,
+    load_prompt,
+    prompt_with_ocr_context,
 )
 
 cleaned = clean_caption(
@@ -38,6 +44,9 @@ cleaned = clean_caption(
     [],
 )
 assert cleaned == "Visit keep text", cleaned
+assert clean_caption("python gaze_local.py --caption-provider glm", []) is None
+assert is_console_noise("Traceback (most recent call last)")
+assert prompt_with_ocr_context("describe", ["字幕A"]).startswith("OCR has already captured")
 
 img = Image.new("RGB", (200, 100), "white")
 masked = apply_masks(img, ["menu-bar"], ["0,80,200,20"])
@@ -50,6 +59,8 @@ plain_target = CaptureTarget(None, "Arcadia")
 assert auto_mask_presets(browser_target) == ["browser-top"]
 assert auto_mask_presets(plain_target) == []
 assert effective_mask_presets(browser_target, ["mac-safe", "browser-top"], True) == ["mac-safe", "browser-top"]
+assert is_target_blacklisted(CaptureTarget(None, "Telegram"), ["Telegram"])
+assert not is_target_blacklisted(CaptureTarget(None, "Disco Elysium"), ["Telegram"])
 
 same = image_diff_score(image_signature(img), image_signature(img))
 changed = image_diff_score(image_signature(img), image_signature(masked))
@@ -82,6 +93,23 @@ frontmost = frontmost_app_name()
 active = find_active_macos_window()
 assert frontmost is None or isinstance(frontmost, str)
 assert active is None or active.label
+
+class Args:
+    prompt = None
+    prompt_file = None
+
+assert "输出一句" in load_prompt(Args())
+with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tmp:
+    tmp.write("custom prompt")
+    tmp_path = tmp.name
+try:
+    class FileArgs:
+        prompt = None
+        prompt_file = tmp_path
+
+    assert load_prompt(FileArgs()) == "custom prompt"
+finally:
+    Path(tmp_path).unlink(missing_ok=True)
 PY
 
 echo "== launcher command builder =="

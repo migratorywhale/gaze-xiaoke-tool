@@ -23,6 +23,8 @@ This tool can observe screen contents. Treat every OCR line and vision caption a
 
 - Prefer `--dry-run` for first tests.
 - Prefer `--region` or `--window` over full-screen capture.
+- `--window` and `--follow-active-window` use a narrow default: when the intended window cannot be found, gaze skips/fails instead of capturing fullscreen. Only use `--allow-fullscreen-fallback` for deliberate manual debugging.
+- Add private app/window fragments to `GAZE_WINDOW_BLACKLIST`; matching windows are skipped entirely.
 - Prefer `--mask-preset mac-safe` when testing on a normal desktop.
 - Use `--auto-mask` with `--follow-active-window` to cover known browser chrome automatically.
 - Use `--follow-active-window` only after confirming the current foreground app is safe to observe.

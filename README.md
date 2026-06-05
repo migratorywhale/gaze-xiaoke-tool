@@ -1,8 +1,14 @@
 # gaze-xiaoke-tool
 
-这是把 `gaze_开源分享版.md` 整理成“小克可接入”的本地工具包：Mac 端采集屏幕文字/画面描述，Linux/VPS 端接收后写入专用 `gaze_realtime.json` 里的 `_realtime:*` keys，再由独立的 gaze MCP 按需读取。
+这是把 gaze 思路整理成“小克可接入”的本地工具包：Mac 端采集屏幕文字/画面描述，Linux/VPS 端接收后写入专用 `gaze_realtime.json` 里的 `_realtime:*` keys，再由独立的 gaze MCP 按需读取。
 
 我做成了保守版：默认可以 `--dry-run` 测试，不会直接上传屏幕内容；服务端的 gaze MCP 和 memory MCP 已经隔离，gaze 不写入长期记忆图谱。
+
+## Acknowledgements
+
+这个仓库的早期形状来自栈/江栈分享的 gaze 思路；后续也参考了他的开源实现 [jiangxi1129/gaze](https://github.com/jiangxi1129/gaze)，尤其是“窄门 default”、窗口黑名单、OCR 上下文给 vision、mock provider 和失败时不退回全屏这些工程判断。
+
+咱们这版是 macOS + 小克独立 MCP 管线：截图用 macOS `screencapture`/Quartz，实时数据写入独立 `gaze_realtime.json`，不写进长期记忆库。
 
 ## 老板一句话版
 
@@ -36,6 +42,8 @@ GLM_API_KEY=你的智谱key
 GAZE_SSH_HOST=linuxuser@45.76.219.241
 GAZE_REMOTE_COMMAND=GAZE_STORE_PATH=/home/linuxuser/search_tool/gaze_realtime.json GAZE_TTL_SECONDS=21600 python3 /home/linuxuser/search_tool/gaze_push_caption.py
 GAZE_BOOKMARK_KEYWORDS=你书签栏里不想被OCR推送的词
+GAZE_WINDOW_BLACKLIST=你不想被截到的窗口关键词
+GAZE_PROMPT_FILE=/path/to/your-gaze-prompt.txt
 GAZE_MCP_URL=https://migratorybird.xyz/mcp/gaze/
 ```
 
@@ -76,22 +84,34 @@ python gaze_local.py --once --dry-run --caption-provider none
 python gaze_local.py --once --dry-run --no-ocr --caption-provider glm
 ```
 
+没配视觉 key 但想测流程：
+
+```bash
+python gaze_local.py --once --dry-run --no-ocr --caption-provider mock
+```
+
+自定义 vision prompt：
+
+```bash
+python gaze_local.py --caption-provider glm --prompt-file ./prompts/xiaoke-gaze.txt --dry-run
+```
+
 持续运行并上传：
 
 ```bash
 python gaze_local.py --caption-provider glm
 ```
 
-只截某个窗口：
+只截某个窗口。默认是窄门：找不到窗口就退出/跳过，不会退回全屏乱截桌面：
 
 ```bash
 python gaze_local.py -w "Claude" --dry-run
 ```
 
-如果窗口必须存在，避免退回全屏：
+如果你确实想回旧行为，显式打开宽门：
 
 ```bash
-python gaze_local.py -w "Disco Elysium" --strict-window --dry-run
+python gaze_local.py -w "Claude" --allow-fullscreen-fallback --dry-run
 ```
 
 自动跟随当前前台窗口：
@@ -99,6 +119,8 @@ python gaze_local.py -w "Disco Elysium" --strict-window --dry-run
 ```bash
 python gaze_local.py --follow-active-window --mask-preset mac-safe --dry-run
 ```
+
+`--follow-active-window` 检测不到前台窗口时也默认跳过，不会退回全屏。切到邮件、聊天、密码管理器、终端等默认黑名单窗口时会整帧跳过。可以用 `.env` 里的 `GAZE_WINDOW_BLACKLIST` 追加自己的窗口关键词。
 
 只截一块区域：
 

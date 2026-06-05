@@ -225,7 +225,7 @@ def render_page() -> str:
     <fieldset>
       <legend>Channels</legend>
       <label><input type="checkbox" name="no_ocr"> Disable OCR</label>
-      <label>Vision <select name="caption_provider"><option value="none" selected>none</option><option value="glm">glm</option></select></label>
+      <label>Vision <select name="caption_provider"><option value="none" selected>none</option><option value="mock">mock</option><option value="glm">glm</option></select></label>
     </fieldset>
     <fieldset>
       <legend>Timing</legend>

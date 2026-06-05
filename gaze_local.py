@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -77,6 +78,80 @@ DEFAULT_BOOKMARK_KEYWORDS = [
     "哔哩哗哩",
 ]
 
+DEFAULT_WINDOW_BLACKLIST = [
+    "Messages",
+    "信息",
+    "Mail",
+    "邮件",
+    "Outlook",
+    "微信",
+    "WeChat",
+    "QQ",
+    "TIM",
+    "Telegram",
+    "Discord",
+    "Signal",
+    "LINE",
+    "Slack",
+    "支付宝",
+    "Alipay",
+    "Wallet",
+    "银行",
+    "Bank",
+    "1Password",
+    "Bitwarden",
+    "KeePass",
+    "LastPass",
+    "Keychain Access",
+    "Terminal",
+    "iTerm",
+    "Warp",
+    "Visual Studio Code",
+    "Cursor",
+    "gaze_local",
+    "gaze launcher",
+]
+
+CONSOLE_NOISE_TERMS = [
+    "gaze_local.py",
+    "gaze_launcher.py",
+    "python gaze",
+    "python3 gaze",
+    "--caption-provider",
+    "--ocr-interval",
+    "--mask-preset",
+    "PYTHONUNBUFFERED",
+    "Traceback (most recent call last)",
+    "File \"",
+    "zsh:",
+    "bash:",
+    "curl ",
+    "ssh ",
+    "scp ",
+    "git ",
+    "npm ",
+    "node_modules",
+    "localhost:",
+    "127.0.0.1",
+]
+
+APP_KEY_NORMALIZERS = [
+    ("Google Chrome", "Chrome"),
+    ("Microsoft Edge", "Edge"),
+    ("Mozilla Firefox", "Firefox"),
+    ("Firefox", "Firefox"),
+    ("Safari", "Safari"),
+    ("Arc", "Arc"),
+    ("Brave", "Brave"),
+    ("Visual Studio Code", "VSCode"),
+    ("Cursor", "Cursor"),
+    ("Spotify", "Spotify"),
+    ("Bilibili", "Bilibili"),
+    ("哔哩哔哩", "Bilibili"),
+    ("Doki Doki", "DDLC"),
+    ("Disco Elysium", "Disco Elysium"),
+]
+
 
 @dataclass(frozen=True)
 class CaptureTarget:
@@ -95,13 +170,14 @@ class GLMCaptioner:
         self.endpoint = endpoint
         self.prompt = prompt
 
-    def caption(self, image: Image.Image) -> str:
+    def caption(self, image: Image.Image, recent_ocr: list[str] | None = None) -> str:
         import httpx
 
         image = shrink(image, max_side=1024)
         buf = BytesIO()
         image.convert("RGB").save(buf, format="JPEG", quality=85, optimize=True)
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        prompt = prompt_with_ocr_context(self.prompt, recent_ocr)
 
         response = httpx.post(
             self.endpoint,
@@ -112,7 +188,7 @@ class GLMCaptioner:
                         "role": "user",
                         "content": [
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                            {"type": "text", "text": self.prompt},
+                            {"type": "text", "text": prompt},
                         ],
                     }
                 ],
@@ -128,6 +204,13 @@ class GLMCaptioner:
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError(f"unexpected GLM response: {data}") from exc
         return str(text).strip().strip("\"'。.")
+
+
+class MockCaptioner:
+    def caption(self, image: Image.Image, recent_ocr: list[str] | None = None) -> str:
+        width, height = image.size
+        ocr_note = f"，已有OCR {len(recent_ocr)}条" if recent_ocr else ""
+        return f"[mock vision] 当前帧 {width}x{height}{ocr_note}"
 
 
 class OcrEngine:
@@ -205,7 +288,13 @@ def parse_region(value: str | None) -> tuple[int, int, int, int] | None:
     return x, y, x + width, y + height
 
 
-def capture_target(window: str | None, region: str | None, *, strict_window: bool = False) -> CaptureTarget:
+def capture_target(
+    window: str | None,
+    region: str | None,
+    *,
+    strict_window: bool = False,
+    allow_fullscreen_fallback: bool = False,
+) -> CaptureTarget:
     bbox = parse_region(region)
     if bbox:
         return CaptureTarget(bbox=bbox, label=f"region:{region}")
@@ -214,20 +303,29 @@ def capture_target(window: str | None, region: str | None, *, strict_window: boo
         found = find_macos_window(window)
         if found:
             return found
-        if strict_window:
+        if strict_window or not allow_fullscreen_fallback:
             raise RuntimeError(f"window not found: {window!r}")
         print(f"[warn] window not found: {window!r}; falling back to fullscreen", file=sys.stderr)
+        return CaptureTarget(bbox=None, label="fullscreen:fallback")
 
     return CaptureTarget(bbox=None, label=window or "fullscreen")
 
 
-def current_capture_target(args: argparse.Namespace, fallback: CaptureTarget) -> CaptureTarget:
+def current_capture_target(args: argparse.Namespace, fallback: CaptureTarget) -> CaptureTarget | None:
     if args.region:
         return fallback
     if args.follow_active_window:
         found = find_active_macos_window()
         if found:
             return found
+        if not args.allow_fullscreen_fallback:
+            if args.verbose:
+                print(
+                    "[warn] active window not found; skipping frame "
+                    "(use --allow-fullscreen-fallback to capture fullscreen)",
+                    file=sys.stderr,
+                )
+            return None
         if args.verbose:
             print("[warn] active window not found; using fallback target", file=sys.stderr)
     return fallback
@@ -327,7 +425,35 @@ def target_from_window_bounds(
     y = int(float(bounds["Y"]) * scale)
     width = int(float(bounds["Width"]) * scale)
     height = int(float(bounds["Height"]) * scale)
-    return CaptureTarget(bbox=(x, y, x + width, y + height), label=label, app_name=app_name, window_id=window_id)
+    return CaptureTarget(
+        bbox=(x, y, x + width, y + height),
+        label=normalize_window_label(label, app_name),
+        app_name=app_name,
+        window_id=window_id,
+    )
+
+
+def normalize_window_label(label: str | None, app_name: str | None = None) -> str:
+    haystack = f"{app_name or ''} {label or ''}".strip()
+    if not haystack:
+        return "fullscreen"
+    for needle, key in APP_KEY_NORMALIZERS:
+        if needle.lower() in haystack.lower():
+            return key
+    return (label or app_name or "fullscreen")[:40].strip() or "fullscreen"
+
+
+def csv_env_list(name: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+
+def env_window_blacklist() -> list[str]:
+    return DEFAULT_WINDOW_BLACKLIST + csv_env_list("GAZE_WINDOW_BLACKLIST")
+
+
+def is_target_blacklisted(target: CaptureTarget, blacklist: list[str]) -> bool:
+    haystack = f"{target.app_name or ''} {target.label or ''}".lower()
+    return any(keyword.lower() in haystack for keyword in blacklist if keyword.strip())
 
 
 def mac_screen_scale() -> float:
@@ -473,6 +599,8 @@ def clean_caption(text: str, bookmark_keywords: list[str], min_keep: int = 3) ->
     elif text.startswith("[屏上文字] "):
         prefix, text = "[屏上文字] ", text[len("[屏上文字] "):]
 
+    if is_console_noise(text):
+        return None
     for rx in NOISE_REGEXES:
         text = rx.sub("", text)
     for keyword in bookmark_keywords:
@@ -485,7 +613,27 @@ def clean_caption(text: str, bookmark_keywords: list[str], min_keep: int = 3) ->
     bare = re.sub(r"[/\s]+", "", text)
     if len(bare) < min_keep:
         return None
+    if is_console_noise(text):
+        return None
     return prefix + text
+
+
+def is_console_noise(text: str) -> bool:
+    lower = text.lower()
+    return any(term.lower() in lower for term in CONSOLE_NOISE_TERMS)
+
+
+def prompt_with_ocr_context(prompt: str, recent_ocr: list[str] | None) -> str:
+    if not recent_ocr:
+        return prompt
+    ocr_context = "\n".join(f"- {line}" for line in recent_ocr[-6:] if line.strip())
+    if not ocr_context:
+        return prompt
+    return (
+        "OCR has already captured these screen-text snippets. "
+        "Do not repeat them unless an important visual detail depends on them.\n"
+        f"{ocr_context}\n\n---\n\n{prompt}"
+    )
 
 
 def make_entry(source: str, caption: str, target: CaptureTarget) -> dict[str, Any]:
@@ -631,18 +779,31 @@ def image_diff_score(left: bytes | None, right: bytes) -> float:
 
 
 def env_bookmark_keywords() -> list[str]:
-    extra = os.getenv("GAZE_BOOKMARK_KEYWORDS", "")
-    return DEFAULT_BOOKMARK_KEYWORDS + [item.strip() for item in extra.split(",") if item.strip()]
+    return DEFAULT_BOOKMARK_KEYWORDS + csv_env_list("GAZE_BOOKMARK_KEYWORDS")
+
+
+def load_prompt(args: argparse.Namespace) -> str:
+    prompt_file = args.prompt_file or os.getenv("GAZE_PROMPT_FILE")
+    if prompt_file:
+        return Path(prompt_file).expanduser().read_text(encoding="utf-8").strip()
+    return args.prompt or os.getenv("GAZE_PROMPT") or DEFAULT_PROMPT
 
 
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
     try:
-        fallback_target = capture_target(args.window, args.region, strict_window=args.strict_window)
+        fallback_target = capture_target(
+            args.window,
+            args.region,
+            strict_window=args.strict_window,
+            allow_fullscreen_fallback=args.allow_fullscreen_fallback,
+        )
     except RuntimeError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 2
     bookmark_keywords = env_bookmark_keywords()
+    window_blacklist = env_window_blacklist()
+    prompt = load_prompt(args)
     pusher = EntryPusher(
         ssh_host=args.ssh_host or os.getenv("GAZE_SSH_HOST"),
         remote_command=args.remote_command or os.getenv("GAZE_REMOTE_COMMAND", DEFAULT_REMOTE_COMMAND),
@@ -667,10 +828,12 @@ def run(args: argparse.Namespace) -> int:
                 api_key=os.getenv("GLM_API_KEY"),
                 model=args.glm_model,
                 endpoint=args.glm_endpoint,
-                prompt=args.prompt,
+                prompt=prompt,
             )
         except ValueError as exc:
             print(f"[warn] {exc}; vision captions disabled", file=sys.stderr)
+    elif args.caption_provider == "mock":
+        captioner = MockCaptioner()
 
     prev_texts: list[str] = []
     prev_caption_signature: bytes | None = None
@@ -681,6 +844,18 @@ def run(args: argparse.Namespace) -> int:
     while True:
         started = time.time()
         target = current_capture_target(args, fallback_target)
+        if target is None:
+            if args.once:
+                return 0
+            time.sleep(max(0.5, args.ocr_interval))
+            continue
+        if is_target_blacklisted(target, window_blacklist):
+            if args.verbose:
+                print(f"[privacy] skipped blacklisted window: {target.label}", file=sys.stderr)
+            if args.once:
+                return 0
+            time.sleep(max(0.5, args.ocr_interval))
+            continue
         target_key = (target.label, target.bbox, target.app_name)
         mask_presets = effective_mask_presets(target, args.mask_preset, args.auto_mask)
         mask_key = tuple(mask_presets)
@@ -714,7 +889,7 @@ def run(args: argparse.Namespace) -> int:
             diff_score = image_diff_score(prev_caption_signature, signature)
             try:
                 if args.vision_min_diff <= 0 or diff_score >= args.vision_min_diff:
-                    caption = captioner.caption(image)
+                    caption = captioner.caption(image, recent_ocr=prev_texts[-6:] if prev_texts else None)
                     cleaned = clean_caption(caption, bookmark_keywords)
                     if cleaned:
                         entry = make_entry("cap", cleaned, target)
@@ -753,7 +928,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--strict-window",
         action="store_true",
-        help="Fail instead of falling back to fullscreen when --window is not found.",
+        help="Compatibility alias for the default narrow behavior: fail when --window is not found.",
+    )
+    parser.add_argument(
+        "--allow-fullscreen-fallback",
+        action="store_true",
+        help="Wide door: allow --window or --follow-active-window to fall back to fullscreen.",
     )
     parser.add_argument(
         "--follow-active-window",
@@ -778,10 +958,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Black out x,y,width,height before OCR/vision. Negative x/y count from right/bottom.",
     )
-    parser.add_argument("--caption-provider", choices=["glm", "none"], default="glm")
+    parser.add_argument("--caption-provider", choices=["glm", "mock", "none"], default="glm")
     parser.add_argument("--glm-model", default="glm-4v-flash")
     parser.add_argument("--glm-endpoint", default="https://open.bigmodel.cn/api/paas/v4/chat/completions")
-    parser.add_argument("--prompt", default=DEFAULT_PROMPT)
+    parser.add_argument("--prompt", help="Inline vision prompt. Overrides GAZE_PROMPT and the built-in default.")
+    parser.add_argument("--prompt-file", help="Read the vision prompt from a UTF-8 text file. Overrides --prompt.")
     parser.add_argument("--no-ocr", action="store_true")
     parser.add_argument("--ocr-interval", type=float, default=3.0)
     parser.add_argument("--caption-interval", type=float, default=10.0)
