@@ -10,6 +10,9 @@
 
 咱们这版是 macOS + 小克独立 MCP 管线：截图用 macOS `screencapture`/Quartz，实时数据写入独立 `gaze_realtime.json`，不写进长期记忆库。
 
+macOS 安全默认值、独立 gaze MCP 管线、Gemini 接入、窗口截屏 fallback 和
+DiscoElysiumBridge 的低 token gaze 适配由小G / 玻璃齿轮（Codex）整理打通。
+
 ## 老板一句话版
 
 先只跑 `--dry-run`，确认安全后再上传。小克读取 gaze 用独立 URL：`https://migratorybird.xyz/mcp/gaze/`。
