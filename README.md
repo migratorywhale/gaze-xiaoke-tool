@@ -79,6 +79,12 @@ cd "/Users/Isa/Projects/gaze-xiaoke-tool"
 python gaze_local.py --once --dry-run --caption-provider none
 ```
 
+密集文字屏可以临时提高 OCR 返回上限，默认是 1200 字符：
+
+```bash
+python gaze_local.py --once --dry-run --caption-provider none --max-ocr-chars 2000
+```
+
 如果 macOS 弹出“屏幕录制”权限，请给运行它的终端/应用授权，然后重跑。
 
 测 vision caption 但仍不上传：

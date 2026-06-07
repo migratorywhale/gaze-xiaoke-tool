@@ -1059,7 +1059,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vision-min-diff", type=float, default=3.0, help="Skip vision if 32x32 mean diff is below this. Use 0 to disable.")
     parser.add_argument("--ocr-min-score", type=float, default=0.6)
     parser.add_argument("--ocr-min-chars", type=int, default=3)
-    parser.add_argument("--max-ocr-chars", type=int, default=200)
+    parser.add_argument("--max-ocr-chars", type=int, default=1200)
     parser.add_argument("--ssh-host")
     parser.add_argument("--remote-command")
     parser.add_argument("--retries", type=int, default=2)
