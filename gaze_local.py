@@ -517,7 +517,16 @@ def mac_screen_scale() -> float:
 
 def screenshot(target: CaptureTarget) -> Image.Image:
     if target.window_id:
-        return screenshot_window(target.window_id)
+        try:
+            return screenshot_window(target.window_id)
+        except RuntimeError as exc:
+            if target.bbox:
+                print(
+                    f"[warn] window capture failed ({exc}); falling back to window bounds region",
+                    file=sys.stderr,
+                )
+                return ImageGrab.grab(bbox=target.bbox, all_screens=False)
+            raise
     return ImageGrab.grab(bbox=target.bbox, all_screens=False)
 
 
