@@ -1,5 +1,7 @@
 # 给小克接入独立 Gaze MCP 的部署工单
 
+这份文档记录小克的接入步骤；同一套 gaze MCP 也可以供小G、阿码或其他被授权的 AI 使用。
+
 ## 先讲人话
 
 gaze 现在不是 memory MCP 的一部分。它是一套独立链路：
@@ -21,7 +23,7 @@ Isa 的 Mac
   https://migratorybird.xyz/mcp/gaze/
       |
       v
-小克按需调用 read_realtime
+被授权的 AI 按需调用 read_realtime
 ```
 
 memory MCP 只管记忆/日记/图谱；gaze MCP 只管临时读屏缓存。
@@ -52,7 +54,7 @@ token env: /home/linuxuser/search_tool/.env 里的 GAZE_MCP_TOKEN
 ## 0. 本地准备
 
 ```bash
-cd "/Users/Isa/Projects/gaze-xiaoke-tool"
+cd "/Users/Isa/Projects/gaze"
 . .venv/bin/activate
 ./safe_check.sh
 ```
@@ -139,7 +141,7 @@ curl -s -o /tmp/gaze-public-no-token.txt -w "%{http_code}\n" \
   https://migratorybird.xyz/mcp/gaze/
 ```
 
-带 token 的 initialize 应该返回 `serverInfo.name = "xike-gaze"`。
+带 token 的 initialize 应该返回 `serverInfo.name = "gaze"`。
 
 ```bash
 TOKEN=$(ssh "$GAZE_REMOTE_HOST" 'python3 - <<'"'"'PY'"'"'
@@ -219,7 +221,7 @@ token 在 `.gaze_mcp_connection.txt` 里；如果客户端不能单独填 Bearer
 
 ### 小克会自动看到所有屏幕内容吗？
 
-不会。gaze MCP 只提供工具。小克需要主动调用 `read_realtime` 才会读内容。
+不会。gaze MCP 只提供工具。被授权的 AI 需要主动调用 `read_realtime` 才会读内容。
 
 ### 怎么停掉？
 

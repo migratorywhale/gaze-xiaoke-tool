@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone MCP server for gaze realtime data.
 
-This server is deliberately separate from Xiaoke's memory MCP. It exposes only
+This server is deliberately separate from long-term memory MCPs. It exposes only
 the short-lived gaze realtime tools and reads/writes a dedicated JSON store.
 """
 
@@ -31,7 +31,7 @@ GAZE_REALTIME_PATH = Path(
 GAZE_MCP_TOKEN = os.environ.get("GAZE_MCP_TOKEN", "")
 GAZE_MCP_PORT = int(os.environ.get("GAZE_MCP_PORT", "8772"))
 
-app = Server("xike-gaze")
+app = Server("gaze")
 
 
 def load_realtime_store() -> dict[str, Any]:
@@ -189,7 +189,7 @@ def run_http(port: int = GAZE_MCP_PORT) -> None:
         await session_manager.handle_request(scope, receive, send)
 
     async def health(_request):
-        return JSONResponse({"ok": True, "service": "xike-gaze"})
+        return JSONResponse({"ok": True, "service": "gaze"})
 
     starlette_app = Starlette(
         lifespan=lifespan,
