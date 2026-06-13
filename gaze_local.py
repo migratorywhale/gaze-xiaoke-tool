@@ -239,8 +239,11 @@ class GeminiCaptioner:
                     }
                 ],
                 "generationConfig": {
-                    "maxOutputTokens": 180,
+                    # Thinking models can spend the budget before emitting the
+                    # visible caption, so disable thinking and leave enough room.
+                    "maxOutputTokens": 768,
                     "temperature": 0.4,
+                    "thinkingConfig": {"thinkingBudget": 0},
                 },
             },
             headers={
