@@ -11,6 +11,7 @@
 - App-aware auto masking for common browser windows.
 - Vision image-diff throttling for unchanged frames.
 - Foreground macOS window tracking with `--follow-active-window`.
+- Subtitle ROI cropping and `--video-mode` preset for video/subtitle watching.
 - Tkinter/browser launchers for composing and running local gaze commands.
 - VPS-side `push_caption.py` with file locking, sanitized window names, bounded timeline size, and fixed JSON read/write handling.
 - TTL cleanup for stale `_realtime:*` entries.

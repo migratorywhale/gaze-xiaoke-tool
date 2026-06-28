@@ -32,6 +32,13 @@ DEFAULT_PROMPT = """看截图，忠实总结屏幕上的内容。
 DEFAULT_REMOTE_COMMAND = "python3 /root/mcp-memory-server/push_caption.py"
 PUSH_IDLE = {"empty", "waiting"}
 MASK_PRESETS = ("menu-bar", "browser-top", "dock-bottom", "mac-safe")
+SUBTITLE_ROI_PRESETS = {
+    # Crop after the target window is captured. Keep enough vertical context for
+    # one- or two-line subtitles while avoiding browser chrome and most controls.
+    "bottom": (0.0, 0.52, 1.0, 0.42),
+    "lower-third": (0.0, 0.60, 1.0, 0.34),
+    "center": (0.08, 0.50, 0.84, 0.42),
+}
 BROWSER_APP_HINTS = (
     "arc",
     "brave",
@@ -338,6 +345,56 @@ def parse_region(value: str | None) -> tuple[int, int, int, int] | None:
     return x, y, x + width, y + height
 
 
+def parse_roi_rect(value: str, image_width: int, image_height: int) -> tuple[int, int, int, int]:
+    """Parse a relative-or-pixel ROI as x,y,width,height within the captured image."""
+    value = value.strip()
+    preset = SUBTITLE_ROI_PRESETS.get(value)
+    if preset:
+        x, y, width, height = preset
+        return clip_rect(
+            (
+                round(x * image_width),
+                round(y * image_height),
+                round((x + width) * image_width),
+                round((y + height) * image_height),
+            ),
+            image_width,
+            image_height,
+        )
+
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        allowed = ", ".join(sorted(SUBTITLE_ROI_PRESETS))
+        raise argparse.ArgumentTypeError(
+            f"--subtitle-roi must be one of {allowed} or x,y,width,height"
+        )
+
+    numbers = [parse_roi_number(part) for part in parts]
+    x, y, width, height = numbers
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("--subtitle-roi width and height must be positive")
+
+    if any(isinstance(item, float) for item in numbers):
+        left = round(float(x) * image_width)
+        top = round(float(y) * image_height)
+        right = round((float(x) + float(width)) * image_width)
+        bottom = round((float(y) + float(height)) * image_height)
+    else:
+        left = int(x)
+        top = int(y)
+        right = int(x + width)
+        bottom = int(y + height)
+    return clip_rect((left, top, right, bottom), image_width, image_height)
+
+
+def parse_roi_number(value: str) -> int | float:
+    if value.endswith("%"):
+        return float(value[:-1].strip()) / 100.0
+    if "." in value:
+        return float(value)
+    return int(value)
+
+
 def capture_target(
     window: str | None,
     region: str | None,
@@ -575,6 +632,20 @@ def apply_masks(image: Image.Image, presets: list[str], rect_values: list[str]) 
     return masked
 
 
+def apply_subtitle_roi(image: Image.Image, roi_value: str | None) -> tuple[Image.Image, str | None]:
+    if not roi_value:
+        return image, None
+    rect = parse_roi_rect(roi_value, image.width, image.height)
+    left, top, right, bottom = rect
+    if right <= left or bottom <= top:
+        raise argparse.ArgumentTypeError(f"--subtitle-roi resolved to an empty crop: {roi_value}")
+    return image.crop(rect), normalize_roi_label(roi_value)
+
+
+def normalize_roi_label(value: str) -> str:
+    return value.strip().replace(" ", "_")
+
+
 def effective_mask_presets(target: CaptureTarget, presets: list[str], auto_mask: bool) -> list[str]:
     if not auto_mask:
         return list(presets)
@@ -708,7 +779,7 @@ def extract_gemini_text(data: dict[str, Any]) -> str:
     return text.strip().strip("\"'。.")
 
 
-def make_entry(source: str, caption: str, target: CaptureTarget) -> dict[str, Any]:
+def make_entry(source: str, caption: str, target: CaptureTarget, roi: str | None = None) -> dict[str, Any]:
     entry = {
         "source": source,
         "caption": caption,
@@ -717,6 +788,8 @@ def make_entry(source: str, caption: str, target: CaptureTarget) -> dict[str, An
     }
     if target.app_name:
         entry["app"] = target.app_name
+    if roi:
+        entry["roi"] = roi
     return entry
 
 
@@ -861,6 +934,17 @@ def load_prompt(args: argparse.Namespace) -> str:
     return args.prompt or os.getenv("GAZE_PROMPT") or DEFAULT_PROMPT
 
 
+def apply_mode_presets(args: argparse.Namespace) -> None:
+    if not args.video_mode:
+        return
+    if not args.window and not args.region and not args.follow_active_window:
+        args.follow_active_window = True
+    if not args.subtitle_roi:
+        args.subtitle_roi = "bottom"
+    if not args.auto_mask:
+        args.auto_mask = True
+
+
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
     caption_provider = args.caption_provider or os.getenv("GAZE_CAPTION_PROVIDER", "gemini")
@@ -922,8 +1006,9 @@ def run(args: argparse.Namespace) -> int:
     prev_texts: list[str] = []
     prev_caption_signature: bytes | None = None
     next_caption_time = 0.0
-    last_target_key: tuple[str, tuple[int, int, int, int] | None, str | None] | None = None
+    last_target_key: tuple[str, tuple[int, int, int, int] | None, str | None, str | None] | None = None
     last_mask_key: tuple[str, ...] | None = None
+    last_roi_key: tuple[str, str, int, int] | None = None
 
     while True:
         started = time.time()
@@ -940,13 +1025,14 @@ def run(args: argparse.Namespace) -> int:
                 return 0
             time.sleep(max(0.5, args.ocr_interval))
             continue
-        target_key = (target.label, target.bbox, target.app_name)
+        target_key = (target.label, target.bbox, target.app_name, args.subtitle_roi)
         mask_presets = effective_mask_presets(target, args.mask_preset, args.auto_mask)
         mask_key = tuple(mask_presets)
         if target_key != last_target_key:
             prev_texts = []
             prev_caption_signature = None
             last_target_key = target_key
+            last_roi_key = None
             if args.verbose:
                 print(f"[target] {target.label}")
         if args.verbose and args.auto_mask and mask_key != last_mask_key:
@@ -955,6 +1041,15 @@ def run(args: argparse.Namespace) -> int:
             if auto_presets:
                 print(f"[mask] auto {target.app_name or target.label}: {','.join(auto_presets)}")
         image = apply_masks(screenshot(target), mask_presets, args.mask_rect)
+        try:
+            image, roi_label = apply_subtitle_roi(image, args.subtitle_roi)
+        except argparse.ArgumentTypeError as exc:
+            print(f"[error] {exc}", file=sys.stderr)
+            return 2
+        roi_key = (target.label, roi_label or "", image.width, image.height)
+        if args.verbose and roi_label and roi_key != last_roi_key:
+            last_roi_key = roi_key
+            print(f"[roi] {roi_label}: {image.width}x{image.height}")
 
         if ocr:
             curr_texts = ocr.read(image, min_chars=args.ocr_min_chars, min_score=args.ocr_min_score)
@@ -963,7 +1058,7 @@ def run(args: argparse.Namespace) -> int:
                 joined = " / ".join(new_lines)[: args.max_ocr_chars]
                 cleaned = clean_caption(f"[屏上文字] {joined}", bookmark_keywords)
                 if cleaned:
-                    entry = make_entry("ocr", cleaned, target)
+                    entry = make_entry("ocr", cleaned, target, roi=roi_label)
                     ok, msg = pusher.enqueue(entry)
                     print_status("OCR", cleaned, ok, msg)
             prev_texts = curr_texts
@@ -976,7 +1071,7 @@ def run(args: argparse.Namespace) -> int:
                     caption = captioner.caption(image, recent_ocr=prev_texts[-6:] if prev_texts else None)
                     cleaned = clean_caption(caption, bookmark_keywords)
                     if cleaned:
-                        entry = make_entry("cap", cleaned, target)
+                        entry = make_entry("cap", cleaned, target, roi=roi_label)
                         ok, msg = pusher.enqueue(entry)
                         print_status("CAP", cleaned, ok, msg)
                     prev_caption_signature = signature
@@ -1037,6 +1132,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Add app-aware privacy masks, such as browser chrome masking for browser windows.",
     )
     parser.add_argument(
+        "--subtitle-roi",
+        nargs="?",
+        const="bottom",
+        metavar="ROI",
+        help=(
+            "Crop OCR/vision to a subtitle region after capture. "
+            "Use no value for 'bottom', one of bottom/lower-third/center, "
+            "or x,y,width,height in pixels, fractions, or percentages."
+        ),
+    )
+    parser.add_argument(
+        "--video-mode",
+        action="store_true",
+        help=(
+            "Preset for watching videos: follow the active window if no target is set, "
+            "enable app-aware top masking, and use --subtitle-roi bottom."
+        ),
+    )
+    parser.add_argument(
         "--mask-rect",
         action="append",
         default=[],
@@ -1078,6 +1192,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    apply_mode_presets(args)
     try:
         return run(args)
     except KeyboardInterrupt:

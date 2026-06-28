@@ -141,6 +141,28 @@ python gaze_local.py --follow-active-window --mask-preset mac-safe --dry-run
 python gaze_local.py --region 0,80,1200,760 --dry-run
 ```
 
+看视频/字幕时，只截窗口里的字幕区域，避免整屏画面和 UI 噪音挤进 OCR/vision：
+
+```bash
+python gaze_local.py --follow-active-window --subtitle-roi --dry-run
+python gaze_local.py -w "Bilibili" --subtitle-roi lower-third --dry-run
+```
+
+`--subtitle-roi` 不带值时等同于 `bottom`，也可以用 `lower-third`、`center`，或写成相对/像素区域：
+
+```bash
+python gaze_local.py --subtitle-roi 0,0.55,1,0.35 --dry-run
+python gaze_local.py --subtitle-roi 0%,55%,100%,35% --dry-run
+python gaze_local.py --subtitle-roi 0,600,1920,360 --dry-run
+```
+
+懒人视频模式会自动启用：前台窗口跟随（除非你指定了 `--window` / `--region`）、浏览器顶部自动遮罩、字幕 ROI：
+
+```bash
+python gaze_local.py --video-mode --dry-run
+python gaze_local.py --video-mode --caption-provider gemini
+```
+
 遮掉常见隐私区域后再识别：
 
 ```bash

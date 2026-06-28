@@ -26,6 +26,8 @@ from gaze_local import (
     CaptureTarget,
     EntryPusher,
     apply_masks,
+    apply_mode_presets,
+    apply_subtitle_roi,
     auto_mask_presets,
     clean_caption,
     effective_mask_presets,
@@ -37,6 +39,7 @@ from gaze_local import (
     is_console_noise,
     is_target_blacklisted,
     load_prompt,
+    parse_roi_rect,
     prompt_with_ocr_context,
 )
 
@@ -55,6 +58,11 @@ masked = apply_masks(img, ["menu-bar"], ["0,80,200,20"])
 assert masked.getpixel((10, 10)) == (0, 0, 0)
 assert masked.getpixel((10, 90)) == (0, 0, 0)
 assert masked.getpixel((100, 50)) == (255, 255, 255)
+cropped, roi = apply_subtitle_roi(img, "bottom")
+assert roi == "bottom"
+assert cropped.size == (200, 42), cropped.size
+assert parse_roi_rect("10%,50%,80%,25%", 200, 100) == (20, 50, 180, 75)
+assert parse_roi_rect("0,20,200,30", 200, 100) == (0, 20, 200, 50)
 
 browser_target = CaptureTarget(None, "Arcadia", app_name="Google Chrome")
 plain_target = CaptureTarget(None, "Arcadia")
@@ -101,6 +109,21 @@ class Args:
     prompt_file = None
 
 assert "忠实总结" in load_prompt(Args())
+
+class ModeArgs:
+    video_mode = True
+    window = None
+    region = None
+    follow_active_window = False
+    subtitle_roi = None
+    auto_mask = False
+
+mode_args = ModeArgs()
+apply_mode_presets(mode_args)
+assert mode_args.follow_active_window is True
+assert mode_args.subtitle_roi == "bottom"
+assert mode_args.auto_mask is True
+
 with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tmp:
     tmp.write("custom prompt")
     tmp_path = tmp.name
